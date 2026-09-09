@@ -1,0 +1,28 @@
+[package]
+name = "optioncalendar-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "oca — CLI for optionCalendar"
+readme = "../../README.md"
+keywords = ["calendar", "cli", "ics"]
+categories = ["command-line-utilities"]
+
+[[bin]]
+name = "optioncalendar"
+path = "src/main.rs"
+
+[[bin]]
+name = "oca"
+path = "src/main.rs"
+
+[dependencies]
+optionSDK = { workspace = true }
+optioncalendar-core = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+chrono = { workspace = true }
+crossterm = { workspace = true }

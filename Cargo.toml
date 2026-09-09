@@ -1,0 +1,32 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/optioncalendar-core",
+    "crates/optioncalendar-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "Apache-2.0"
+authors = ["horizzon3507 <148660626+horizzon3507@users.noreply.github.com>"]
+repository = "https://github.com/fireflylabss/optionCalendar"
+
+[workspace.dependencies]
+optionSDK = { path = "../optionSDK", version = "0.1.3" }
+optioncalendar-core = { path = "crates/optioncalendar-core", version = "0.1.0" }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+thiserror = "2"
+dirs = "6"
+clap = { version = "4", features = ["derive", "color"] }
+anyhow = "1"
+tempfile = "3"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+crossterm = "0.28"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
