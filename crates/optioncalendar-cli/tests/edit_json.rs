@@ -53,7 +53,9 @@ fn json_ls_is_stable_array_of_events() {
     let trip = &events[0];
     assert_eq!(trip["summary"], "Trip");
     assert_eq!(trip["start"], "2030-09-01T00:00:00");
-    assert_eq!(trip["end"], "2030-09-03T00:00:00");
+    // All-day: `--end` is the inclusive last day, JSON carries the exclusive ICS DTEND.
+    assert_eq!(trip["end"], "2030-09-04T00:00:00");
+    assert_eq!(trip["all_day"], true);
     assert_eq!(trip["description"], "");
     assert!(trip["uid"].as_str().is_some_and(|u| !u.is_empty()));
     let dentist = &events[1];
@@ -62,7 +64,18 @@ fn json_ls_is_stable_array_of_events() {
     assert_eq!(dentist["description"], "cleaning");
     let mut keys: Vec<&String> = dentist.as_object().unwrap().keys().collect();
     keys.sort();
-    assert_eq!(keys, ["description", "end", "start", "summary", "uid"]);
+    assert_eq!(
+        keys,
+        [
+            "all_day",
+            "description",
+            "end",
+            "rrule",
+            "start",
+            "summary",
+            "uid"
+        ]
+    );
 }
 
 #[test]

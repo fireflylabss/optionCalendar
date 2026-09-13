@@ -12,7 +12,7 @@ use clap::{
 };
 use option_sdk::App;
 use optioncalendar_core::{
-    CalStore, DayItem, Event, TaskDue, WeekStart, due_tasks_or_empty, load_settings,
+    CalStore, DayItem, Event, TaskDue, WeekStart, due_tasks_or_empty, is_date_only, load_settings,
     merged_between, month_range, parse_dt, to_ics, today, today_merged,
 };
 use serde::Serialize;
@@ -244,6 +244,7 @@ fn cmd_add(summary: &str, at: &str, end: Option<&str>, description: Option<&str>
         bail!("summary cannot be empty");
     }
     let start = parse_cli_dt(at)?;
+    let all_day = is_date_only(at) && end.is_none_or(is_date_only);
     let end = end.map(parse_cli_dt).transpose()?;
     if let Some(end) = end
         && end < start
@@ -255,7 +256,11 @@ fn cmd_add(summary: &str, at: &str, end: Option<&str>, description: Option<&str>
         );
     }
     let mut store = open_store()?;
-    let mut event = Event::new(summary.trim(), start, end);
+    let mut event = if all_day {
+        Event::new_all_day(summary.trim(), start.date(), end.map(|e| e.date()))
+    } else {
+        Event::new(summary.trim(), start, end)
+    };
     if let Some(desc) = description {
         event.description = desc.trim().to_string();
     }
@@ -558,6 +563,9 @@ fn cmd_edit(id: &str, args: EditArgs<'_>) -> Result<()> {
         .update(&uid, |event| {
             if let Some(summary) = args.summary {
                 event.summary = summary.trim().to_string();
+            }
+            if let Some(at) = args.at {
+                event.all_day = is_date_only(at);
             }
             event.start = new_start;
             event.end = new_end;

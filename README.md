@@ -56,12 +56,18 @@ cargo build -p optioncalendar-cli
 ./target/debug/oca config --week-start sunday --launch-tui-on-no-args true
 ```
 
+`oca add "X" --at 2026-09-10` (date only) creates an all-day event; `--end`
+is the inclusive last day. Imported ICS files keep everything optionCalendar
+does not interpret (LOCATION, VALARM, TZID params, X-props…) across saves, and
+simple `RRULE`s (`FREQ=DAILY|WEEKLY|MONTHLY|YEARLY` with `INTERVAL`, `COUNT`,
+`UNTIL`) are expanded in `today`/`week`/`month`/`tui`.
+
 `oca edit <id>` takes a UID or a 1-based index from `oca ls --uid` and any of
 `--summary`, `--at`, `--end`, `--description`, `--clear-end`,
 `--clear-description`; the UID never changes and `end >= start` is enforced.
 
 The global `--json` flag makes `ls`, `today`, `week`, `month`, `next` and
-`search` print a JSON array of `{uid, summary, description, start, end}`
+`search` print a JSON array of `{uid, summary, description, start, end, all_day, rrule}`
 (ISO 8601 `YYYY-MM-DDTHH:MM:SS`, `end` may be `null`) with no mark or colour.
 `today`, `week` and `month` with `--json` tag each item with `kind`: `"event"` as
 above, or `"task"` with `{text, due, source}`.

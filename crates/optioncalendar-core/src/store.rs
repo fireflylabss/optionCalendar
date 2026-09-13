@@ -208,6 +208,40 @@ mod tests {
         assert_eq!(store.events.len(), 1);
     }
 
+    #[test]
+    fn import_then_add_keeps_foreign_props() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cal.ics");
+        let mut store = CalStore::open(path.clone()).unwrap();
+        let text = "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:rich\r\nDTSTART;TZID=America/Sao_Paulo:20260904T100000\r\nDTEND;TZID=America/Sao_Paulo:20260904T110000\r\nSUMMARY:Standup\r\nLOCATION:Room 1\r\nRRULE:FREQ=WEEKLY;COUNT=4\r\nX-FOO:bar\r\nBEGIN:VALARM\r\nTRIGGER:-PT10M\r\nACTION:DISPLAY\r\nEND:VALARM\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+        assert_eq!(store.import(text).unwrap(), 1);
+        store
+            .add(Event::new(
+                "Dentist",
+                parse_dt_for_test("2026-09-05T10:00"),
+                None,
+            ))
+            .unwrap();
+
+        let raw = std::fs::read_to_string(&path).unwrap();
+        for line in [
+            "DTSTART;TZID=America/Sao_Paulo:20260904T100000\r\n",
+            "DTEND;TZID=America/Sao_Paulo:20260904T110000\r\n",
+            "LOCATION:Room 1\r\n",
+            "RRULE:FREQ=WEEKLY;COUNT=4\r\n",
+            "X-FOO:bar\r\n",
+            "BEGIN:VALARM\r\nTRIGGER:-PT10M\r\nACTION:DISPLAY\r\nEND:VALARM\r\n",
+        ] {
+            assert!(raw.contains(line), "missing {line:?} in {raw}");
+        }
+        let reloaded = CalStore::open(path).unwrap();
+        assert_eq!(reloaded.events.len(), 2);
+        let rich = reloaded.events.iter().find(|e| e.uid == "rich").unwrap();
+        assert_eq!(rich, &store.events[0]);
+        assert_eq!(rich.rrule.as_deref(), Some("FREQ=WEEKLY;COUNT=4"));
+        assert_eq!(rich.extra.len(), 6);
+    }
+
     fn parse_dt_for_test(raw: &str) -> chrono::NaiveDateTime {
         chrono::NaiveDateTime::parse_from_str(raw, "%Y-%m-%dT%H:%M").unwrap()
     }
@@ -265,11 +299,16 @@ mod tests {
             description: String::new(),
             start: parse_dt_for_test("2026-09-04T10:00"),
             end: None,
+            all_day: false,
+            rrule: None,
+            extra: vec![("LOCATION".into(), "HQ".into())],
+            start_raw: None,
+            end_raw: None,
         };
         let json = serde_json::to_string(&event).unwrap();
         assert_eq!(
             json,
-            r#"{"uid":"u1","summary":"S","description":"","start":"2026-09-04T10:00:00","end":null}"#
+            r#"{"uid":"u1","summary":"S","description":"","start":"2026-09-04T10:00:00","end":null,"all_day":false,"rrule":null}"#
         );
     }
 

@@ -10,9 +10,10 @@ pub mod tasks;
 pub mod week;
 
 pub use error::{Error, Result};
-pub use ics::{Event, format_dt, parse_dt, parse_ics, to_ics};
+pub use ics::{Event, format_date, format_dt, is_date_only, parse_dt, parse_ics, to_ics};
 pub use query::{
-    DayItem, events_between, events_on, merged_between, month_range, occurs_on, today, today_merged,
+    DayItem, events_between, events_on, merged_between, month_range, occurrences_between,
+    occurs_on, today, today_merged,
 };
 pub use store::{
     CalStore, Settings, default_ics_path, load_settings, load_settings_from, save_settings,
