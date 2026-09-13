@@ -19,6 +19,9 @@ jobs:
     runs-on: ubuntu-latest
     env:
       HAS_AUR_KEY: ${{ secrets.AUR_SSH_KEY != '' }}
+      # AUR packaging pulls optionSDK from the tagged tarball (_optionsdk_ver in PKGBUILD),
+      # so it is only valid once OPTIONSDK_REF is itself a tag.
+      AUR_ENABLED: ${{ startsWith(env.OPTIONSDK_REF, 'v') }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -79,10 +82,12 @@ jobs:
       # bump.sh waits for the GitHub tag tarball (published above) and for the
       # optionSDK tag (_optionsdk_ver in PKGBUILD) before hashing them.
       - name: Bump AUR packaging
+        if: ${{ env.AUR_ENABLED == 'true' }}
         working-directory: optionCalendar
         run: ./packaging/aur/bump.sh "$GITHUB_REF_NAME"
 
       - name: Upload AUR packaging
+        if: ${{ env.AUR_ENABLED == 'true' }}
         uses: actions/upload-artifact@v4
         with:
           name: aur-packaging
@@ -93,7 +98,7 @@ jobs:
       # Requires the AUR_SSH_KEY secret (private key registered on aur.archlinux.org).
       # Skipped when the secret is absent; publish manually with packaging/aur/publish.sh.
       - name: Publish to AUR
-        if: ${{ env.HAS_AUR_KEY == 'true' }}
+        if: ${{ env.AUR_ENABLED == 'true' && env.HAS_AUR_KEY == 'true' }}
         working-directory: optionCalendar
         run: |
           mkdir -p ~/.ssh

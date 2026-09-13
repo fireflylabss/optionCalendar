@@ -47,7 +47,8 @@
 - `.github/workflows/release.yml` — push de tag `v*`: verifica tag == versão do workspace,
   testa, builda release, publica GitHub Release com
   `optioncalendar-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz` (`optioncalendar` + `oca`),
-  roda `packaging/aur/bump.sh` e anexa PKGBUILD/.SRCINFO como artifact.
+  roda `packaging/aur/bump.sh` e anexa PKGBUILD/.SRCINFO como artifact (steps de AUR só
+  rodam quando `OPTIONSDK_REF` é uma tag `v*`, já que o PKGBUILD baixa o tarball da tag do optionSDK).
 - Push pro AUR só roda se o secret `AUR_SSH_KEY` (chave SSH privada cadastrada no AUR)
   existir no repo; sem ele o step é pulado e o publish é manual via `publish.sh`.
 - Rode localmente antes de abrir PR: `cargo fmt --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace`.
