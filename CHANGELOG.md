@@ -29,6 +29,13 @@ We only call something **stable** when we mean it.
 
 </details>
 
+## Unreleased
+
+- `edit <id> [--summary S] [--at START] [--end END] [--description D] [--clear-end] [--clear-description]` edits an event by UID or 1-based index; the UID never changes, `end >= start` is validated, and no flags is an error.
+- Global `--json` flag for `ls`, `today`, `week`, `month`, `next`, `search`: stable JSON array of `{uid, summary, description, start, end}` (ISO 8601); `today` items carry `kind: "event" | "task"`.
+- `CalStore::update(uid, f)` in core; `Event` and `TaskDue` implement `Serialize`.
+- CLI integration tests (`assert_cmd`) for `edit` and `--json`.
+
 ## v0.1.0-stable · 08/09/2026
 
 First stable cut: ICS calendar CLI with day/week/month views, tasks bridge, and a read-only TUI. This version was made for CLI with a stable release channel on 08/09/2026 (v0.1.0-stable).

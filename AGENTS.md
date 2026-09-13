@@ -6,7 +6,8 @@
 - `CARGO_TARGET_DIR` deve apontar para `$(pwd)/target` nos scripts.
 - `optionSDK` é path dep (`../optionSDK`); o PKGBUILD resolve via download separado.
 - Smoke test: `OPTION_HOME=/tmp/oca-smoke ./target/debug/oca add "Test" --at 2026-09-10T10:00 && ./target/debug/oca ls --uid`.
-- Testes: `cargo test -p optioncalendar-core` (18 testes, sem rede).
+- Testes: `cargo test -p optioncalendar-core` (20 testes, sem rede) e
+  `cargo test -p optioncalendar-cli --test cli` (integração via `assert_cmd` + `OPTION_HOME` em tempdir).
 
 ## Arquitetura
 - `crates/optioncalendar-core/` — ICS parse/serialize, file store, queries, tasks bridge, `WeekStart`.
@@ -16,7 +17,9 @@
   - `tasks.rs` — bridge optionNotes: `- [ ] text due:YYYY-MM-DD` de `~/Documents/Notes/tasks/*.md`.
   - `week.rs` — `WeekStart` (Monday default ISO 8601, ou Sunday).
 - `crates/optioncalendar-cli/` — `oca` / `optioncalendar` (mesmo entrypoint).
-  - `main.rs` — clap CLI: add, ls, today, week, month, next, search, rm, import, export, tui, config.
+  - `main.rs` — clap CLI: add, ls, today, week, month, next, search, edit, rm, import, export, tui, config.
+    Flag global `--json` (ls/today/week/month/next/search) imprime array JSON estável em stdout.
+  - `tests/cli.rs` — testes de integração de `edit` e `--json`.
   - `tui.rs` — month + agenda view read-only (crossterm). Grid segue `week_start`.
 
 ## Config
@@ -42,5 +45,7 @@
 - `blake_like` mistura nanos do wall-clock pra evitar colisão de UID em adds idênticos.
 - `parse_dt` aceita `YYYYMMDDTHHMMSS`, `YYYY-MM-DDTHH:MM`, `YYYY-MM-DD HH:MM`, `YYYYMMDD`, `YYYY-MM-DD`.
 - Strip de `Z` suffix (UTC designator) — optionCalendar mantém wall-clock time.
-- `CalStore::remove` retorna `bool` (encontrou ou não); `rm` por UID ou índice 1-based.
+- `CalStore::remove` e `CalStore::update` retornam `bool` (encontrou ou não); `rm`/`edit` por UID ou índice 1-based (`resolve_id`).
+- `edit` nunca muda o UID (`CalStore::update` restaura o UID após o closure); valida `end >= start`; sem flags = erro "nothing to change".
+- `Event`/`TaskDue` derivam `Serialize` com datas ISO 8601 (`YYYY-MM-DDTHH:MM:SS` / `YYYY-MM-DD`).
 - Tasks bridge nunca falha: dir/vault ausente = lista vazia.
