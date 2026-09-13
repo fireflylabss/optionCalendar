@@ -39,19 +39,21 @@ export CARGO_TARGET_DIR="$(pwd)/target"
 cargo build -p optioncalendar-cli
 
 ./target/debug/oca add "Dentist" --at 2026-09-10T10:00 --description "cleaning"
+./target/debug/oca ls                 # numbered: `  1  2026-09-10 10:00  Dentist`
 ./target/debug/oca ls --uid
-./target/debug/oca today
-./target/debug/oca week
-./target/debug/oca month
+./target/debug/oca today              # or: oca today 2026-10-01
+./target/debug/oca week               # or: oca week 2026-10-01 (7 days from that date)
+./target/debug/oca month              # or: oca month 2026-10 / 2026-10-01
 ./target/debug/oca next
 ./target/debug/oca search dentist
 ./target/debug/oca edit 1 --summary "Dentist (moved)" --at 2026-09-11T11:00 --end 2026-09-11T12:00
 ./target/debug/oca --json ls          # also today/week/month/next/search
 ./target/debug/oca import backup.ics
 ./target/debug/oca export backup.ics
-./target/debug/oca rm 1
+./target/debug/oca rm 1               # index from `oca ls`, or a UID
 ./target/debug/oca tui
 ./target/debug/oca config
+./target/debug/oca config --week-start sunday --launch-tui-on-no-args true
 ```
 
 `oca add "X" --at 2026-09-10` (date only) creates an all-day event; `--end`
@@ -67,14 +69,19 @@ simple `RRULE`s (`FREQ=DAILY|WEEKLY|MONTHLY|YEARLY` with `INTERVAL`, `COUNT`,
 The global `--json` flag makes `ls`, `today`, `week`, `month`, `next` and
 `search` print a JSON array of `{uid, summary, description, start, end, all_day, rrule}`
 (ISO 8601 `YYYY-MM-DDTHH:MM:SS`, `end` may be `null`) with no mark or colour.
-`today --json` tags each item with `kind`: `"event"` as above, or `"task"`
-with `{text, due, source}`.
+`today`, `week` and `month` with `--json` tag each item with `kind`: `"event"` as
+above, or `"task"` with `{text, due, source}`.
 
 `week_start` (`monday` default, ISO 8601, or `sunday`) in
-`~/.option/cal/config.toml` controls the first day of the week in the TUI grid.
+`~/.option/cal/config.toml` controls the first day of the week in the TUI grid;
+set it with `oca config --week-start monday|sunday`.
+
+`search` is case-insensitive, including non-ASCII (`REUNIÃO` matches `reunião`).
 
 Tasks from `~/Documents/Notes/tasks/*.md` with `- [ ] text due:YYYY-MM-DD`
-appear in `today` automatically; a missing vault simply means no tasks.
+appear in `today` (due or overdue) and in `week`/`month` (due inside the
+window, grouped on the due day); a missing vault simply means no tasks.
+All-day events show as `all-day` in the `week`/`month` day groups.
 
 `oca tui` opens the month + agenda view (arrows/hjkl move, Tab switches
 pane, `T` toggles TUI-on-bare-invocation, q quits; read-only).
@@ -93,3 +100,15 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 cargo build -p optioncalendar-cli
 ```
+
+## CI / Releases
+
+- `ci.yml` runs fmt, clippy (`-D warnings`), tests and a release build on every
+  push to `main` and every PR. `optionSDK` is cloned into `../optionSDK` at the
+  ref set by `OPTIONSDK_REF` in the workflow.
+- `release.yml` runs on `v*` tags: publishes a GitHub Release with a Linux
+  x86_64 tarball (`optioncalendar` + `oca`) and, once `OPTIONSDK_REF` points at
+  an optionSDK tag, runs `packaging/aur/bump.sh`.
+  Pushing to the AUR requires the `AUR_SSH_KEY` repository secret (private SSH
+  key registered on aur.archlinux.org); without it that step is skipped and
+  `packaging/aur/publish.sh` can be run locally.

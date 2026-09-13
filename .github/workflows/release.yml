@@ -1,0 +1,110 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  # Keep in sync with ci.yml. Once App::CAL ships in a tagged optionSDK release,
+  # switch this to that tag (and bump _optionsdk_ver in packaging/aur/PKGBUILD).
+  OPTIONSDK_REF: pull/1/head
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      HAS_AUR_KEY: ${{ secrets.AUR_SSH_KEY != '' }}
+      # AUR packaging pulls optionSDK from the tagged tarball (_optionsdk_ver in PKGBUILD),
+      # so it is only valid once OPTIONSDK_REF is itself a tag.
+      AUR_ENABLED: ${{ startsWith(env.OPTIONSDK_REF, 'v') }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: optionCalendar
+
+      - name: Clone optionSDK
+        run: |
+          git clone --no-checkout https://github.com/fireflylabss/optionSDK.git optionSDK
+          cd optionSDK
+          git fetch --depth=1 origin "$OPTIONSDK_REF"
+          git checkout --detach FETCH_HEAD
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: optionCalendar
+
+      - name: Set CARGO_TARGET_DIR
+        working-directory: optionCalendar
+        run: echo "CARGO_TARGET_DIR=$(pwd)/target" >> "$GITHUB_ENV"
+
+      - name: Verify tag matches Cargo.toml
+        working-directory: optionCalendar
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          ver="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+          if [ "$tag" != "$ver" ]; then
+            echo "Tag v$tag does not match workspace version $ver"
+            exit 1
+          fi
+
+      - name: Test
+        working-directory: optionCalendar
+        run: cargo test --workspace
+
+      - name: Release build
+        working-directory: optionCalendar
+        run: cargo build --release -p optioncalendar-cli
+
+      - name: Package tarball
+        working-directory: optionCalendar
+        run: |
+          name="optioncalendar-${GITHUB_REF_NAME}-x86_64-unknown-linux-gnu"
+          mkdir -p "dist/$name"
+          cp target/release/optioncalendar target/release/oca LICENSE README.md "dist/$name/"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+          (cd dist && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            optionCalendar/dist/*.tar.gz
+            optionCalendar/dist/*.sha256
+          generate_release_notes: true
+
+      # bump.sh waits for the GitHub tag tarball (published above) and for the
+      # optionSDK tag (_optionsdk_ver in PKGBUILD) before hashing them.
+      - name: Bump AUR packaging
+        if: ${{ env.AUR_ENABLED == 'true' }}
+        working-directory: optionCalendar
+        run: ./packaging/aur/bump.sh "$GITHUB_REF_NAME"
+
+      - name: Upload AUR packaging
+        if: ${{ env.AUR_ENABLED == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: aur-packaging
+          path: |
+            optionCalendar/packaging/aur/PKGBUILD
+            optionCalendar/packaging/aur/.SRCINFO
+
+      # Requires the AUR_SSH_KEY secret (private key registered on aur.archlinux.org).
+      # Skipped when the secret is absent; publish manually with packaging/aur/publish.sh.
+      - name: Publish to AUR
+        if: ${{ env.AUR_ENABLED == 'true' && env.HAS_AUR_KEY == 'true' }}
+        working-directory: optionCalendar
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.AUR_SSH_KEY }}" > ~/.ssh/aur
+          chmod 600 ~/.ssh/aur
+          ssh-keyscan aur.archlinux.org >> ~/.ssh/known_hosts
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          AUR_SSH_KEY=~/.ssh/aur ./packaging/aur/publish.sh

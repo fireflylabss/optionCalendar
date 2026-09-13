@@ -12,8 +12,8 @@ use clap::{
 };
 use option_sdk::App;
 use optioncalendar_core::{
-    CalStore, DayItem, Event, TaskDue, due_tasks_or_empty, events_between, is_date_only,
-    load_settings, month_range, parse_dt, to_ics, today, today_merged,
+    CalStore, DayItem, Event, TaskDue, WeekStart, due_tasks_or_empty, is_date_only, load_settings,
+    merged_between, month_range, parse_dt, to_ics, today, today_merged,
 };
 use serde::Serialize;
 
@@ -81,12 +81,24 @@ enum Commands {
         #[arg(long)]
         uid: bool,
     },
-    /// Show today's events plus due tasks
-    Today,
-    /// Show the next 7 days
-    Week,
-    /// Show the current month
-    Month,
+    /// Show a day's events plus due tasks (today by default)
+    Today {
+        /// Day to show: YYYY-MM-DD (default: today)
+        #[arg(value_name = "DATE")]
+        date: Option<String>,
+    },
+    /// Show 7 days of events and due tasks (starting today by default)
+    Week {
+        /// First day of the window: YYYY-MM-DD (default: today)
+        #[arg(value_name = "DATE")]
+        date: Option<String>,
+    },
+    /// Show a month's events and due tasks (current month by default)
+    Month {
+        /// Month to show: YYYY-MM or YYYY-MM-DD (default: current month)
+        #[arg(value_name = "DATE")]
+        date: Option<String>,
+    },
     /// Show the next upcoming event
     Next,
     /// Search events by summary or description
@@ -117,9 +129,9 @@ enum Commands {
         #[arg(long)]
         clear_description: bool,
     },
-    /// Remove an event by UID or 1-based list index (see `oca ls --uid`)
+    /// Remove an event by UID or the 1-based index printed by `oca ls`
     Rm {
-        /// UID or 1-based index from `oca ls`
+        /// UID (see `oca ls --uid`) or the index shown by `oca ls`
         id: String,
     },
     /// Import events from an .ics file (skips duplicate UIDs)
@@ -134,11 +146,14 @@ enum Commands {
     },
     /// Open the interactive month + agenda view (read-only)
     Tui,
-    /// Show settings, or persist `--launch-tui-on-no-args true|false`
+    /// Show settings, or persist `--launch-tui-on-no-args` / `--week-start`
     Config {
         /// Launch the TUI when `oca` is invoked with no subcommand
         #[arg(long, value_name = "BOOL")]
         launch_tui_on_no_args: Option<String>,
+        /// First day of the week: monday (default) or sunday
+        #[arg(long, value_name = "DAY")]
+        week_start: Option<String>,
     },
 }
 
@@ -177,9 +192,9 @@ fn run() -> Result<()> {
             description,
         } => cmd_add(&summary, &at, end.as_deref(), description.as_deref())?,
         Commands::Ls { uid } => cmd_ls(uid, json)?,
-        Commands::Today => cmd_today(json)?,
-        Commands::Week => cmd_week(json)?,
-        Commands::Month => cmd_month(json)?,
+        Commands::Today { date } => cmd_today(date.as_deref(), json)?,
+        Commands::Week { date } => cmd_week(date.as_deref(), json)?,
+        Commands::Month { date } => cmd_month(date.as_deref(), json)?,
         Commands::Next => cmd_next(json)?,
         Commands::Search { query } => cmd_search(&query, json)?,
         Commands::Edit {
@@ -207,7 +222,8 @@ fn run() -> Result<()> {
         Commands::Tui => tui::launch()?,
         Commands::Config {
             launch_tui_on_no_args,
-        } => cmd_config(launch_tui_on_no_args.as_deref())?,
+            week_start,
+        } => cmd_config(launch_tui_on_no_args.as_deref(), week_start.as_deref())?,
     }
     Ok(())
 }
@@ -258,6 +274,26 @@ fn cmd_add(summary: &str, at: &str, end: Option<&str>, description: Option<&str>
     Ok(())
 }
 
+/// Optional positional day for `today` / `week`: `YYYY-MM-DD`, default today.
+fn parse_cli_day(raw: Option<&str>) -> Result<NaiveDate> {
+    match raw {
+        None => Ok(today()),
+        Some(raw) => NaiveDate::parse_from_str(raw.trim(), "%Y-%m-%d")
+            .with_context(|| format!("invalid date '{raw}': use YYYY-MM-DD")),
+    }
+}
+
+/// Optional positional month for `month`: `YYYY-MM` or `YYYY-MM-DD`, default current month.
+fn parse_cli_month(raw: Option<&str>) -> Result<NaiveDate> {
+    let Some(raw) = raw else {
+        return Ok(today());
+    };
+    let trimmed = raw.trim();
+    NaiveDate::parse_from_str(trimmed, "%Y-%m-%d")
+        .or_else(|_| NaiveDate::parse_from_str(&format!("{trimmed}-01"), "%Y-%m-%d"))
+        .with_context(|| format!("invalid month '{raw}': use YYYY-MM or YYYY-MM-DD"))
+}
+
 /// JSON line of `today`: an event or a due task, tagged by `kind`.
 #[derive(Serialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
@@ -274,6 +310,17 @@ fn print_json<T: Serialize>(value: &T) -> Result<()> {
     Ok(())
 }
 
+/// Map merged day items to their JSON form.
+fn day_items_json(items: &[DayItem]) -> Vec<DayItemJson<'_>> {
+    items
+        .iter()
+        .map(|item| match item {
+            DayItem::Event(event) => DayItemJson::Event(event),
+            DayItem::Task(task) => DayItemJson::Task(task),
+        })
+        .collect()
+}
+
 fn cmd_ls(show_uid: bool, json: bool) -> Result<()> {
     let store = open_store()?;
     if json {
@@ -283,32 +330,27 @@ fn cmd_ls(show_uid: bool, json: bool) -> Result<()> {
         &store.events.iter().collect::<Vec<_>>(),
         "no events",
         show_uid,
+        true,
     );
     Ok(())
 }
 
-fn cmd_today(json: bool) -> Result<()> {
+fn cmd_today(date: Option<&str>, json: bool) -> Result<()> {
+    let date = parse_cli_day(date)?;
     let store = open_store()?;
-    let date = today();
     // The tasks bridge never fails: missing vault means "no tasks".
     let tasks = due_tasks_or_empty();
     let items = today_merged(&store.events, &tasks, date);
     if json {
-        let items: Vec<DayItemJson> = items
-            .iter()
-            .map(|item| match item {
-                DayItem::Event(event) => DayItemJson::Event(event),
-                DayItem::Task(task) => DayItemJson::Task(task),
-            })
-            .collect();
-        return print_json(&items);
+        return print_json(&day_items_json(&items));
     }
     let mark = App::CAL.mark();
+    let label = if date == today() { "today" } else { "day" };
     if items.is_empty() {
-        println!("{mark} nothing today ({})", date.format("%Y-%m-%d"));
+        println!("{mark} nothing {label} ({})", date.format("%Y-%m-%d"));
         return Ok(());
     }
-    println!("{mark} today · {}", date.format("%Y-%m-%d"));
+    println!("{mark} {label} · {}", date.format("%Y-%m-%d"));
     for item in items {
         match item {
             DayItem::Event(event) => println!("  {}  {}", fmt_dt(&event.start), event.summary),
@@ -323,13 +365,14 @@ fn cmd_today(json: bool) -> Result<()> {
     Ok(())
 }
 
-fn cmd_week(json: bool) -> Result<()> {
+fn cmd_week(date: Option<&str>, json: bool) -> Result<()> {
+    let start = parse_cli_day(date)?;
     let store = open_store()?;
-    let start = today();
     let end = start + chrono::Duration::days(6);
-    let hits = events_between(&store.events, start, end);
+    let tasks = due_tasks_or_empty();
+    let items = merged_between(&store.events, &tasks, start, end);
     if json {
-        return print_json(&hits);
+        return print_json(&day_items_json(&items));
     }
     println!(
         "{} week · {} → {}",
@@ -337,25 +380,38 @@ fn cmd_week(json: bool) -> Result<()> {
         start.format("%m-%d"),
         end.format("%m-%d")
     );
-    print_grouped_by_day(&hits);
+    print_grouped_by_day(&items);
     Ok(())
 }
 
-fn cmd_month(json: bool) -> Result<()> {
+fn cmd_month(date: Option<&str>, json: bool) -> Result<()> {
+    let (first, last) = month_range(parse_cli_month(date)?);
     let store = open_store()?;
-    let (first, last) = month_range(today());
-    let hits = events_between(&store.events, first, last);
+    let tasks = due_tasks_or_empty();
+    let items = merged_between(&store.events, &tasks, first, last);
     if json {
-        return print_json(&hits);
+        return print_json(&day_items_json(&items));
     }
-    println!(
+    let events = items
+        .iter()
+        .filter(|item| matches!(item, DayItem::Event(_)))
+        .count();
+    let tasks_count = items.len() - events;
+    let mut header = format!(
         "{} {} · {} event{}",
         App::CAL.mark(),
         first.format("%Y-%m"),
-        hits.len(),
-        if hits.len() == 1 { "" } else { "s" }
+        events,
+        if events == 1 { "" } else { "s" }
     );
-    print_grouped_by_day(&hits);
+    if tasks_count > 0 {
+        header.push_str(&format!(
+            ", {tasks_count} task{}",
+            if tasks_count == 1 { "" } else { "s" }
+        ));
+    }
+    println!("{header}");
+    print_grouped_by_day(&items);
     Ok(())
 }
 
@@ -420,9 +476,9 @@ fn cmd_next(json: bool) -> Result<()> {
     Ok(())
 }
 
-/// Case-insensitive search over summary and description.
+/// Case-insensitive (Unicode) search over summary and description.
 fn cmd_search(query: &str, json: bool) -> Result<()> {
-    let needle = query.trim().to_ascii_lowercase();
+    let needle = query.trim().to_lowercase();
     if needle.is_empty() {
         bail!("search query cannot be empty");
     }
@@ -430,16 +486,19 @@ fn cmd_search(query: &str, json: bool) -> Result<()> {
     let hits: Vec<&Event> = store
         .events
         .iter()
-        .filter(|event| {
-            event.summary.to_ascii_lowercase().contains(&needle)
-                || event.description.to_ascii_lowercase().contains(&needle)
-        })
+        .filter(|event| event_matches(event, &needle))
         .collect();
     if json {
         return print_json(&hits);
     }
-    print_events(&hits, "no matches", false);
+    print_events(&hits, "no matches", false, false);
     Ok(())
+}
+
+/// True when `needle` (already lowercased) occurs in the summary or description.
+fn event_matches(event: &Event, needle: &str) -> bool {
+    event.summary.to_lowercase().contains(needle)
+        || event.description.to_lowercase().contains(needle)
 }
 
 struct EditArgs<'a> {
@@ -563,30 +622,57 @@ fn resolve_id(store: &CalStore, id: &str) -> Result<String> {
     Ok(id.to_string())
 }
 
-fn cmd_config(launch_tui_on_no_args: Option<&str>) -> Result<()> {
+fn cmd_config(launch_tui_on_no_args: Option<&str>, week_start: Option<&str>) -> Result<()> {
     let mut settings = load_settings().context("failed to load settings")?;
+    let mark = App::CAL.mark();
+    let mut changed = false;
     if let Some(raw) = launch_tui_on_no_args {
-        settings.launch_tui_on_no_args =
-            parse_bool(raw).with_context(|| format!("invalid BOOL '{raw}': use true or false"))?;
+        settings.launch_tui_on_no_args = parse_bool(raw)?;
+        changed = true;
+    }
+    if let Some(raw) = week_start {
+        settings.week_start = parse_week_start(raw)?;
+        changed = true;
+    }
+    if changed {
         optioncalendar_core::save_settings(&settings).context("failed to save settings")?;
-        println!(
-            "{} launch_tui_on_no_args set to {}",
-            App::CAL.mark(),
-            settings.launch_tui_on_no_args
-        );
+        if launch_tui_on_no_args.is_some() {
+            println!(
+                "{mark} launch_tui_on_no_args set to {}",
+                settings.launch_tui_on_no_args
+            );
+        }
+        if week_start.is_some() {
+            println!(
+                "{mark} week_start set to {}",
+                week_start_name(settings.week_start)
+            );
+        }
         return Ok(());
     }
-    println!(
-        "{} config {}",
-        App::CAL.mark(),
-        App::CAL.config_toml().display()
-    );
+    println!("{mark} config {}", App::CAL.config_toml().display());
     println!("  ics_path = {}", settings.ics_path.display());
     println!(
         "  launch_tui_on_no_args = {}",
         settings.launch_tui_on_no_args
     );
+    println!("  week_start = {}", week_start_name(settings.week_start));
     Ok(())
+}
+
+fn parse_week_start(raw: &str) -> Result<WeekStart> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "monday" | "mon" => Ok(WeekStart::Monday),
+        "sunday" | "sun" => Ok(WeekStart::Sunday),
+        _ => bail!("invalid DAY '{raw}': use monday or sunday"),
+    }
+}
+
+fn week_start_name(value: WeekStart) -> &'static str {
+    match value {
+        WeekStart::Monday => "monday",
+        WeekStart::Sunday => "sunday",
+    }
 }
 
 fn parse_bool(raw: &str) -> Result<bool> {
@@ -597,7 +683,8 @@ fn parse_bool(raw: &str) -> Result<bool> {
     }
 }
 
-fn print_events(events: &[&Event], empty_msg: &str, show_uid: bool) {
+/// Print events one per line; `numbered` prefixes the 1-based index `rm` accepts.
+fn print_events(events: &[&Event], empty_msg: &str, show_uid: bool, numbered: bool) {
     let mark = App::CAL.mark();
     if events.is_empty() {
         println!("{mark} {empty_msg}");
@@ -608,32 +695,55 @@ fn print_events(events: &[&Event], empty_msg: &str, show_uid: bool) {
         events.len(),
         if events.len() == 1 { "" } else { "s" }
     );
-    for event in events {
-        if show_uid {
-            println!(
-                "  {}  {}  [{}]",
-                fmt_dt(&event.start),
-                event.summary,
-                event.uid
-            );
-        } else {
-            println!("  {}  {}", fmt_dt(&event.start), event.summary);
-        }
+    for (index, event) in events.iter().enumerate() {
+        println!("  {}", event_line(event, index + 1, show_uid, numbered));
     }
 }
 
-fn print_grouped_by_day(events: &[Event]) {
+/// One `ls`/`search` line: `[index  ]date  summary[  [uid]]`.
+fn event_line(event: &Event, index: usize, show_uid: bool, numbered: bool) -> String {
+    let mut line = String::new();
+    if numbered {
+        line.push_str(&format!("{index:>3}  "));
+    }
+    line.push_str(&fmt_dt(&event.start));
+    line.push_str("  ");
+    line.push_str(&event.summary);
+    if show_uid {
+        line.push_str(&format!("  [{}]", event.uid));
+    }
+    line
+}
+
+fn print_grouped_by_day(items: &[DayItem]) {
     let mut current: Option<NaiveDate> = None;
-    for event in events {
-        let day = event.start.date();
+    for item in items {
+        let day = item.date();
         if current != Some(day) {
             current = Some(day);
             println!("  {}", day.format("%a %Y-%m-%d"));
         }
-        println!("    {}  {}", event.start.format("%H:%M"), event.summary);
+        println!("    {}", day_item_line(item));
     }
-    if events.is_empty() {
+    if items.is_empty() {
         println!("  (empty)");
+    }
+}
+
+/// One line inside a day group: `HH:MM  summary`, `all-day  summary`, or `[ ] task`.
+fn day_item_line(item: &DayItem) -> String {
+    match item {
+        DayItem::Event(event) => format!("{}  {}", fmt_time(&event.start), event.summary),
+        DayItem::Task(task) => format!("[ ] {}", task.text),
+    }
+}
+
+/// `HH:MM`, or `all-day` when the time is midnight, like [`fmt_dt`].
+fn fmt_time(value: &NaiveDateTime) -> String {
+    if value.format("%H:%M:%S").to_string() == "00:00:00" {
+        "all-day".to_string()
+    } else {
+        value.format("%H:%M").to_string()
     }
 }
 
@@ -642,5 +752,86 @@ fn fmt_dt(value: &NaiveDateTime) -> String {
         value.format("%Y-%m-%d").to_string()
     } else {
         value.format("%Y-%m-%d %H:%M").to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn d(y: i32, m: u32, day: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(y, m, day).unwrap()
+    }
+
+    #[test]
+    fn search_is_unicode_case_insensitive() {
+        let event = Event::new(
+            "Reunião de equipe",
+            parse_dt("2026-09-10T10:00").unwrap(),
+            None,
+        );
+        assert!(event_matches(&event, &"REUNIÃO".to_lowercase()));
+        assert!(event_matches(&event, &"equipe".to_lowercase()));
+        assert!(!event_matches(&event, &"dentista".to_lowercase()));
+    }
+
+    #[test]
+    fn ls_lines_are_numbered_with_and_without_uid() {
+        let mut event = Event::new("Dentist", parse_dt("2026-09-10T10:00").unwrap(), None);
+        event.uid = "abc".into();
+        assert_eq!(
+            event_line(&event, 1, false, true),
+            "  1  2026-09-10 10:00  Dentist"
+        );
+        assert_eq!(
+            event_line(&event, 12, true, true),
+            " 12  2026-09-10 10:00  Dentist  [abc]"
+        );
+        assert_eq!(
+            event_line(&event, 1, false, false),
+            "2026-09-10 10:00  Dentist"
+        );
+    }
+
+    #[test]
+    fn positional_dates_parse_or_fail_clearly() {
+        assert_eq!(parse_cli_day(Some("2026-10-01")).unwrap(), d(2026, 10, 1));
+        assert!(parse_cli_day(Some("2026-10")).is_err());
+        assert!(parse_cli_day(Some("bogus")).is_err());
+        assert_eq!(parse_cli_day(None).unwrap(), today());
+
+        assert_eq!(parse_cli_month(Some("2026-10")).unwrap(), d(2026, 10, 1));
+        assert_eq!(
+            parse_cli_month(Some("2026-10-15")).unwrap(),
+            d(2026, 10, 15)
+        );
+        let err = parse_cli_month(Some("10/2026")).unwrap_err().to_string();
+        assert!(err.contains("use YYYY-MM or YYYY-MM-DD"), "{err}");
+    }
+
+    #[test]
+    fn week_start_parses_and_prints() {
+        assert_eq!(parse_week_start("Sunday").unwrap(), WeekStart::Sunday);
+        assert_eq!(parse_week_start("mon").unwrap(), WeekStart::Monday);
+        assert!(parse_week_start("friday").is_err());
+        assert_eq!(week_start_name(WeekStart::Sunday), "sunday");
+    }
+
+    #[test]
+    fn grouped_lines_show_all_day_and_tasks() {
+        let timed = DayItem::Event(Event::new(
+            "Standup",
+            parse_dt("2026-09-10T09:30").unwrap(),
+            None,
+        ));
+        let all_day = DayItem::Event(Event::new("Holiday", parse_dt("2026-09-10").unwrap(), None));
+        let task = DayItem::Task(optioncalendar_core::TaskDue {
+            text: "pay bill".into(),
+            due: d(2026, 9, 10),
+            source: "tasks/a.md".into(),
+        });
+        assert_eq!(day_item_line(&timed), "09:30  Standup");
+        assert_eq!(day_item_line(&all_day), "all-day  Holiday");
+        assert_eq!(day_item_line(&task), "[ ] pay bill");
     }
 }

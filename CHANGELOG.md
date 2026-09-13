@@ -31,6 +31,8 @@ We only call something **stable** when we mean it.
 
 ## Unreleased
 
+- CI workflow (`.github/workflows/ci.yml`): fmt, clippy `-D warnings`, tests and release build on pushes to `main` and PRs; `optionSDK` cloned at `OPTIONSDK_REF`.
+- Release workflow (`.github/workflows/release.yml`): on `v*` tags builds the Linux x86_64 tarball, publishes a GitHub Release, runs `packaging/aur/bump.sh`, and pushes to the AUR when the `AUR_SSH_KEY` secret exists.
 - `edit <id> [--summary S] [--at START] [--end END] [--description D] [--clear-end] [--clear-description]` edits an event by UID or 1-based index; the UID never changes, `end >= start` is validated, and no flags is an error.
 - Global `--json` flag for `ls`, `today`, `week`, `month`, `next`, `search`: stable JSON array of `{uid, summary, description, start, end}` (ISO 8601); `today` items carry `kind: "event" | "task"`.
 - `CalStore::update(uid, f)` in core; `Event` and `TaskDue` implement `Serialize`.
@@ -43,6 +45,12 @@ We only call something **stable** when we mean it.
 - All-day events: `DTEND;VALUE=DATE` is treated as exclusive (a one-day event no longer shows on two days); `oca add … --at YYYY-MM-DD` creates an all-day event serialized as `VALUE=DATE`.
 - `--json` output gains `all_day` and `rrule` fields; all-day `end` is the exclusive ICS DTEND.
 - Recurring events: simple `RRULE` (`FREQ=DAILY|WEEKLY|MONTHLY|YEARLY`, `INTERVAL`, `COUNT`, `UNTIL`) are expanded in `today`/`week`/`month`/`tui`.
+- `ls` numbers each line with the 1-based index `rm` accepts (with and without `--uid`).
+- `config` prints `week_start` and accepts `--week-start monday|sunday`; flags can be combined in one call.
+- `search` is Unicode case-insensitive (`REUNIÃO` matches `reunião`).
+- `today`, `week` and `month` take an optional positional date (`oca today 2026-10-01`, `oca week 2026-10-01`, `oca month 2026-10`); invalid input is a clear error.
+- Tasks due inside the window now appear in `week` and `month`, grouped on their due day as `[ ] text` (core: `merged_between`).
+- `week`/`month` show `all-day` instead of `00:00` for midnight/all-day events.
 
 ## v0.1.0-stable · 08/09/2026
 
