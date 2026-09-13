@@ -12,11 +12,11 @@
 - `crates/optioncalendar-core/` — ICS parse/serialize, file store, queries, tasks bridge, `WeekStart`.
   - `ics.rs` — VEVENT minimal (UID/DTSTART/DTEND/SUMMARY/DESCRIPTION). Unknown props ignorados.
   - `store.rs` — `CalStore` (um ICS file), `Settings` (ics_path, launch_tui_on_no_args, week_start).
-  - `query.rs` — day/week/month queries, `today_merged` (events + tasks).
+  - `query.rs` — day/week/month queries, `today_merged` (events + tasks due/overdue), `merged_between` (events + tasks due in a range).
   - `tasks.rs` — bridge optionNotes: `- [ ] text due:YYYY-MM-DD` de `~/Documents/Notes/tasks/*.md`.
   - `week.rs` — `WeekStart` (Monday default ISO 8601, ou Sunday).
 - `crates/optioncalendar-cli/` — `oca` / `optioncalendar` (mesmo entrypoint).
-  - `main.rs` — clap CLI: add, ls, today, week, month, next, search, rm, import, export, tui, config.
+  - `main.rs` — clap CLI: add, ls (numbered), today/week/month (optional positional date), next, search (Unicode case-insensitive), rm, import, export, tui, config (`--launch-tui-on-no-args`, `--week-start`).
   - `tui.rs` — month + agenda view read-only (crossterm). Grid segue `week_start`.
 
 ## Config
@@ -42,5 +42,5 @@
 - `blake_like` mistura nanos do wall-clock pra evitar colisão de UID em adds idênticos.
 - `parse_dt` aceita `YYYYMMDDTHHMMSS`, `YYYY-MM-DDTHH:MM`, `YYYY-MM-DD HH:MM`, `YYYYMMDD`, `YYYY-MM-DD`.
 - Strip de `Z` suffix (UTC designator) — optionCalendar mantém wall-clock time.
-- `CalStore::remove` retorna `bool` (encontrou ou não); `rm` por UID ou índice 1-based.
+- `CalStore::remove` retorna `bool` (encontrou ou não); `rm` por UID ou índice 1-based (o mesmo que `oca ls` imprime).
 - Tasks bridge nunca falha: dir/vault ausente = lista vazia.
