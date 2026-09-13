@@ -12,6 +12,9 @@ pub mod week;
 pub use error::{Error, Result};
 pub use ics::{Event, format_dt, parse_dt, parse_ics, to_ics};
 pub use query::{DayItem, events_between, events_on, month_range, occurs_on, today, today_merged};
-pub use store::{CalStore, Settings, default_ics_path, load_settings, save_settings};
+pub use store::{
+    CalStore, Settings, default_ics_path, load_settings, load_settings_from, save_settings,
+    save_settings_to,
+};
 pub use tasks::{TaskDue, default_tasks_dir, due_tasks, due_tasks_or_empty};
 pub use week::WeekStart;
