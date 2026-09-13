@@ -6,13 +6,18 @@
 - `CARGO_TARGET_DIR` deve apontar para `$(pwd)/target` nos scripts.
 - `optionSDK` é path dep (`../optionSDK`); o PKGBUILD resolve via download separado.
 - Smoke test: `OPTION_HOME=/tmp/oca-smoke ./target/debug/oca add "Test" --at 2026-09-10T10:00 && ./target/debug/oca ls --uid`.
-- Testes: `cargo test -p optioncalendar-core` (18 testes, sem rede).
+- Testes: `cargo test -p optioncalendar-core` (28 testes, sem rede).
 
 ## Arquitetura
 - `crates/optioncalendar-core/` — ICS parse/serialize, file store, queries, tasks bridge, `WeekStart`.
-  - `ics.rs` — VEVENT minimal (UID/DTSTART/DTEND/SUMMARY/DESCRIPTION). Unknown props ignorados.
+  - `ics.rs` — VEVENT: UID/DTSTART/DTEND/SUMMARY/DESCRIPTION/RRULE interpretados; todo o resto
+    (LOCATION, X-props, blocos aninhados como VALARM) vai cru em `Event::extra` e volta em `to_ics`.
+    `start_raw`/`end_raw` guardam a linha original de DTSTART/DTEND (com params, ex. `TZID=`) e são
+    re-emitidas enquanto ainda batem com `start`/`end`. `all_day` = `VALUE=DATE` ou valor `YYYYMMDD`.
   - `store.rs` — `CalStore` (um ICS file), `Settings` (ics_path, launch_tui_on_no_args, week_start).
-  - `query.rs` — day/week/month queries, `today_merged` (events + tasks).
+  - `query.rs` — day/week/month queries, `today_merged` (events + tasks). `events_on`/`events_between`
+    retornam `Vec<Event>` (clones) e expandem RRULE `FREQ=DAILY|WEEKLY|MONTHLY|YEARLY` com
+    INTERVAL/COUNT/UNTIL (`occurrences_between`); regra não suportada = só a primeira ocorrência.
   - `tasks.rs` — bridge optionNotes: `- [ ] text due:YYYY-MM-DD` de `~/Documents/Notes/tasks/*.md`.
   - `week.rs` — `WeekStart` (Monday default ISO 8601, ou Sunday).
 - `crates/optioncalendar-cli/` — `oca` / `optioncalendar` (mesmo entrypoint).
@@ -44,3 +49,9 @@
 - Strip de `Z` suffix (UTC designator) — optionCalendar mantém wall-clock time.
 - `CalStore::remove` retorna `bool` (encontrou ou não); `rm` por UID ou índice 1-based.
 - Tasks bridge nunca falha: dir/vault ausente = lista vazia.
+- `DTEND;VALUE=DATE` é EXCLUSIVO no ICS: `Event.end` de um all-day guarda o dia seguinte;
+  use `end_or_start()` (inclusivo) nas queries. `Event::new` com datas sem hora vira all-day e
+  converte o `end` inclusivo do CLI para exclusivo.
+- Props conhecidas dentro de sub-componentes (ex. `DESCRIPTION` de um VALARM) não pertencem ao
+  evento: `find_prop` só olha depth 0.
+- Ocorrências expandidas de RRULE mantêm o mesmo `uid`; `rm` opera em `store.events`, não nas queries.

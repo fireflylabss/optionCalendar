@@ -606,7 +606,6 @@ fn agenda_for_day(
     }
     let mut items: Vec<DayItem> = events_on(events, selected)
         .into_iter()
-        .cloned()
         .map(DayItem::Event)
         .collect();
     items.extend(
@@ -616,7 +615,7 @@ fn agenda_for_day(
             .cloned()
             .map(DayItem::Task),
     );
-    items.sort_by(|a, b| day_sort_key(a).cmp(&day_sort_key(b)));
+    items.sort_by_key(day_sort_key);
     items
 }
 

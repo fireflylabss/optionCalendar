@@ -440,7 +440,7 @@ fn print_events(events: &[&Event], empty_msg: &str, show_uid: bool) {
     }
 }
 
-fn print_grouped_by_day(events: &[&Event]) {
+fn print_grouped_by_day(events: &[Event]) {
     let mut current: Option<NaiveDate> = None;
     for event in events {
         let day = event.start.date();

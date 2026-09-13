@@ -1,9 +1,11 @@
-//! Minimal ICS (RFC 5545 subset): VEVENT with UID/DTSTART/DTEND/SUMMARY/DESCRIPTION.
+//! Minimal ICS (RFC 5545 subset): VEVENT with UID/DTSTART/DTEND/SUMMARY/DESCRIPTION/RRULE.
 //!
-//! Only the properties optionCalendar needs are parsed; unknown lines inside a
-//! VEVENT are ignored so files from other calendars keep loading.
+//! Only the properties optionCalendar interprets are parsed into typed fields;
+//! every other line inside a VEVENT (including nested components such as
+//! VALARM) is kept verbatim in [`Event::extra`] and written back by [`to_ics`],
+//! so files from other calendars survive a load/save cycle.
 
-use chrono::NaiveDateTime;
+use chrono::{Duration, NaiveDateTime, NaiveTime};
 
 use crate::{Error, Result};
 
@@ -14,10 +16,27 @@ pub struct Event {
     pub summary: String,
     pub description: String,
     pub start: NaiveDateTime,
+    /// End of the event. For `all_day` events this follows ICS semantics and is
+    /// **exclusive** (the day after the last day); see [`Event::end_or_start`].
     pub end: Option<NaiveDateTime>,
+    /// Date-only event (`DTSTART;VALUE=DATE`).
+    pub all_day: bool,
+    /// Raw `RRULE` value (e.g. `FREQ=WEEKLY;COUNT=4`), expanded by `query`.
+    pub rrule: Option<String>,
+    /// Uninterpreted VEVENT lines as `(name-with-params, value)`, in file order.
+    /// Nested components are kept line by line (`("BEGIN", "VALARM")` … `("END", "VALARM")`).
+    pub extra: Vec<(String, String)>,
+    /// Original `DTSTART` line as `(name-with-params, raw value)`, re-emitted
+    /// verbatim while it still matches `start`.
+    pub start_raw: Option<(String, String)>,
+    /// Original `DTEND` line, same rules as `start_raw`.
+    pub end_raw: Option<(String, String)>,
 }
 
 impl Event {
+    /// Build a new event. A midnight `start` with no time (and an `end`, if
+    /// any, also at midnight) becomes an all-day event; for all-day events the
+    /// given `end` is the **inclusive** last day and is stored exclusive.
     pub fn new(
         summary: impl Into<String>,
         start: NaiveDateTime,
@@ -28,19 +47,42 @@ impl Event {
             "{:x}@optioncalendar",
             blake_like(&summary, &start, end.as_ref())
         );
+        let all_day = is_midnight(&start) && end.is_none_or(|e| is_midnight(&e));
+        let end = if all_day {
+            end.map(|e| e + Duration::days(1))
+        } else {
+            end
+        };
         Self {
             uid,
             summary,
             description: String::new(),
             start,
             end,
+            all_day,
+            rrule: None,
+            extra: Vec::new(),
+            start_raw: None,
+            end_raw: None,
         }
     }
 
-    /// End if set, otherwise start (all-day / instant events occupy one day).
+    /// Inclusive end: `end` if set (minus one day for all-day events, whose
+    /// ICS `DTEND` is exclusive), otherwise `start`.
     pub fn end_or_start(&self) -> NaiveDateTime {
-        self.end.unwrap_or(self.start)
+        match self.end {
+            Some(end) if self.all_day => {
+                let last = end - Duration::days(1);
+                if last < self.start { self.start } else { last }
+            }
+            Some(end) => end,
+            None => self.start,
+        }
     }
+}
+
+fn is_midnight(value: &NaiveDateTime) -> bool {
+    value.time() == NaiveTime::MIN
 }
 
 /// Tiny deterministic hash for generated UIDs (no extra dependency).
@@ -90,9 +132,21 @@ pub fn parse_dt(raw: &str) -> Result<NaiveDateTime> {
     Err(Error::InvalidDate(raw.to_owned()))
 }
 
+/// True when `raw` is a date-only value (`YYYYMMDD` / `YYYY-MM-DD`).
+pub fn is_date_only(raw: &str) -> bool {
+    let value = raw.trim();
+    let value = value.strip_suffix('Z').unwrap_or(value);
+    !value.contains('T') && !value.contains(' ') && !value.contains(':')
+}
+
 /// Serialize back to compact ICS local time: `YYYYMMDDTHHMMSS`.
 pub fn format_dt(value: &NaiveDateTime) -> String {
     value.format("%Y%m%dT%H%M%S").to_string()
+}
+
+/// Serialize as an ICS date: `YYYYMMDD`.
+pub fn format_date(value: &NaiveDateTime) -> String {
+    value.format("%Y%m%d").to_string()
 }
 
 fn unescape(value: &str) -> String {
@@ -130,10 +184,12 @@ pub fn parse_ics(text: &str) -> Vec<Event> {
 
     let mut events = Vec::new();
     let mut current: Option<Vec<(String, String)>> = None;
+    // Depth of nested components (VALARM…) inside the current VEVENT.
+    let mut depth = 0usize;
     for line in logical {
         match line.as_str() {
-            "BEGIN:VEVENT" => current = Some(Vec::new()),
-            "END:VEVENT" => {
+            "BEGIN:VEVENT" if current.is_none() => current = Some(Vec::new()),
+            "END:VEVENT" if depth == 0 => {
                 if let Some(props) = current.take()
                     && let Some(event) = build_event(&props)
                 {
@@ -142,9 +198,14 @@ pub fn parse_ics(text: &str) -> Vec<Event> {
             }
             _ => {
                 if let Some(props) = current.as_mut()
-                    && let Some((key, value)) = split_prop(&line)
+                    && let Some((left, value)) = split_prop(&line)
                 {
-                    props.push((key, value));
+                    match left.to_ascii_uppercase().as_str() {
+                        "BEGIN" => depth += 1,
+                        "END" => depth = depth.saturating_sub(1),
+                        _ => {}
+                    }
+                    props.push((left, value));
                 }
             }
         }
@@ -152,31 +213,103 @@ pub fn parse_ics(text: &str) -> Vec<Event> {
     events
 }
 
-/// Split `KEY;PARAM=X:value` into (`KEY`, `value`).
+/// Split `KEY;PARAM=X:value` into (`KEY;PARAM=X`, `value`).
 fn split_prop(line: &str) -> Option<(String, String)> {
     let colon = line.find(':')?;
     let (left, value) = line.split_at(colon);
-    let key = left.split(';').next()?.trim().to_ascii_uppercase();
-    Some((key, value[1..].to_owned()))
+    Some((left.trim().to_owned(), value[1..].to_owned()))
+}
+
+/// Property name (before any `;PARAM`), upper-cased.
+fn prop_name(left: &str) -> String {
+    left.split(';')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_uppercase()
+}
+
+fn has_param(left: &str, param: &str) -> bool {
+    left.split(';')
+        .skip(1)
+        .any(|p| p.trim().eq_ignore_ascii_case(param))
+}
+
+const KNOWN: [&str; 6] = ["UID", "DTSTART", "DTEND", "SUMMARY", "DESCRIPTION", "RRULE"];
+
+/// First top-level property named `name` (lines inside nested components are skipped).
+fn find_prop<'a>(props: &'a [(String, String)], name: &str) -> Option<&'a (String, String)> {
+    let mut depth = 0usize;
+    for line in props {
+        let current = prop_name(&line.0);
+        match current.as_str() {
+            "BEGIN" => depth += 1,
+            "END" => depth = depth.saturating_sub(1),
+            _ if depth == 0 && current == name => return Some(line),
+            _ => {}
+        }
+    }
+    None
 }
 
 fn prop<'a>(props: &'a [(String, String)], name: &str) -> Option<&'a str> {
-    props
-        .iter()
-        .find(|(key, _)| key == name)
-        .map(|(_, value)| value.as_str())
+    find_prop(props, name).map(|(_, value)| value.as_str())
 }
 
 fn build_event(props: &[(String, String)]) -> Option<Event> {
-    let start = parse_dt(prop(props, "DTSTART")?).ok()?;
-    let end = prop(props, "DTEND").and_then(|raw| parse_dt(raw).ok());
+    let start_line = find_prop(props, "DTSTART")?;
+    let start = parse_dt(&start_line.1).ok()?;
+    let all_day = has_param(&start_line.0, "VALUE=DATE") || is_date_only(&start_line.1);
+    let end_line = find_prop(props, "DTEND");
+    let end = end_line.and_then(|(_, raw)| parse_dt(raw).ok());
+    let end_raw = end_line.filter(|_| end.is_some()).cloned();
+    // A nested component's lines are always preserved, even when they reuse a
+    // known property name (e.g. DESCRIPTION inside VALARM).
+    let mut depth = 0usize;
+    let mut extra = Vec::new();
+    for (left, value) in props {
+        let name = prop_name(left);
+        if depth > 0 || !KNOWN.contains(&name.as_str()) {
+            extra.push((left.clone(), value.clone()));
+        }
+        match name.as_str() {
+            "BEGIN" => depth += 1,
+            "END" => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
     Some(Event {
         uid: prop(props, "UID").unwrap_or("").to_owned(),
         summary: prop(props, "SUMMARY").map(unescape).unwrap_or_default(),
         description: prop(props, "DESCRIPTION").map(unescape).unwrap_or_default(),
         start,
         end,
+        all_day,
+        rrule: prop(props, "RRULE").map(str::to_owned),
+        extra,
+        start_raw: Some(start_line.clone()),
+        end_raw,
     })
+}
+
+/// Emit a DTSTART/DTEND line, reusing the original params+value when unchanged.
+fn push_dt(
+    out: &mut String,
+    name: &str,
+    value: &NaiveDateTime,
+    raw: Option<&(String, String)>,
+    all_day: bool,
+) {
+    if let Some((left, raw_value)) = raw
+        && parse_dt(raw_value).ok().as_ref() == Some(value)
+        && (has_param(left, "VALUE=DATE") || is_date_only(raw_value)) == all_day
+    {
+        out.push_str(&format!("{left}:{raw_value}\r\n"));
+    } else if all_day {
+        out.push_str(&format!("{name};VALUE=DATE:{}\r\n", format_date(value)));
+    } else {
+        out.push_str(&format!("{name}:{}\r\n", format_dt(value)));
+    }
 }
 
 /// Serialize events as a VCALENDAR document.
@@ -187,13 +320,31 @@ pub fn to_ics(events: &[Event]) -> String {
     for event in events {
         out.push_str("BEGIN:VEVENT\r\n");
         out.push_str(&format!("UID:{}\r\n", event.uid));
-        out.push_str(&format!("DTSTART:{}\r\n", format_dt(&event.start)));
+        push_dt(
+            &mut out,
+            "DTSTART",
+            &event.start,
+            event.start_raw.as_ref(),
+            event.all_day,
+        );
         if let Some(end) = event.end {
-            out.push_str(&format!("DTEND:{}\r\n", format_dt(&end)));
+            push_dt(
+                &mut out,
+                "DTEND",
+                &end,
+                event.end_raw.as_ref(),
+                event.all_day,
+            );
         }
         out.push_str(&format!("SUMMARY:{}\r\n", escape(&event.summary)));
         if !event.description.is_empty() {
             out.push_str(&format!("DESCRIPTION:{}\r\n", escape(&event.description)));
+        }
+        if let Some(rrule) = &event.rrule {
+            out.push_str(&format!("RRULE:{rrule}\r\n"));
+        }
+        for (left, value) in &event.extra {
+            out.push_str(&format!("{left}:{value}\r\n"));
         }
         out.push_str("END:VEVENT\r\n");
     }
@@ -207,6 +358,12 @@ mod tests {
 
     const SAMPLE: &str = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:abc-1\r\nDTSTART:20260904T100000\r\nDTEND:20260904T110000\r\nSUMMARY:Standup\r\nDESCRIPTION:team\\, daily\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nUID:abc-2\r\nDTSTART:20260905\r\nSUMMARY:Holiday\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
 
+    const RICH: &str = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:rich-1\r\nDTSTART;TZID=America/Sao_Paulo:20260904T100000\r\nDTEND;TZID=America/Sao_Paulo:20260904T110000\r\nSUMMARY:Standup\r\nLOCATION:Room 1\r\nRRULE:FREQ=WEEKLY;COUNT=4\r\nX-FOO;X-BAR=1:baz\r\nBEGIN:VALARM\r\nTRIGGER:-PT10M\r\nACTION:DISPLAY\r\nDESCRIPTION:Reminder\r\nEND:VALARM\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+
+    fn dt(raw: &str) -> NaiveDateTime {
+        NaiveDateTime::parse_from_str(raw, "%Y-%m-%dT%H:%M:%S").unwrap()
+    }
+
     #[test]
     fn parses_uid_start_end_summary_description() {
         let events = parse_ics(SAMPLE);
@@ -214,20 +371,13 @@ mod tests {
         assert_eq!(events[0].uid, "abc-1");
         assert_eq!(events[0].summary, "Standup");
         assert_eq!(events[0].description, "team, daily");
-        assert_eq!(
-            events[0].start,
-            NaiveDateTime::parse_from_str("2026-09-04T10:00:00", "%Y-%m-%dT%H:%M:%S").unwrap()
-        );
-        assert_eq!(
-            events[0].end,
-            NaiveDateTime::parse_from_str("2026-09-04T11:00:00", "%Y-%m-%dT%H:%M:%S").ok()
-        );
-        // Date-only DTSTART becomes midnight.
-        assert_eq!(
-            events[1].start,
-            NaiveDateTime::parse_from_str("2026-09-05T00:00:00", "%Y-%m-%dT%H:%M:%S").unwrap()
-        );
+        assert_eq!(events[0].start, dt("2026-09-04T10:00:00"));
+        assert_eq!(events[0].end, Some(dt("2026-09-04T11:00:00")));
+        assert!(!events[0].all_day);
+        // Date-only DTSTART becomes midnight and all-day.
+        assert_eq!(events[1].start, dt("2026-09-05T00:00:00"));
         assert_eq!(events[1].end, None);
+        assert!(events[1].all_day);
     }
 
     #[test]
@@ -251,5 +401,84 @@ mod tests {
     fn skips_events_without_dtstart() {
         let text = "BEGIN:VEVENT\r\nUID:x\r\nSUMMARY:no date\r\nEND:VEVENT\r\n";
         assert!(parse_ics(text).is_empty());
+    }
+
+    #[test]
+    fn preserves_unknown_props_nested_components_and_params() {
+        let events = parse_ics(RICH);
+        assert_eq!(events.len(), 1);
+        let event = &events[0];
+        assert_eq!(event.rrule.as_deref(), Some("FREQ=WEEKLY;COUNT=4"));
+        assert_eq!(event.description, "");
+        assert_eq!(
+            event.extra,
+            vec![
+                ("LOCATION".to_string(), "Room 1".to_string()),
+                ("X-FOO;X-BAR=1".to_string(), "baz".to_string()),
+                ("BEGIN".to_string(), "VALARM".to_string()),
+                ("TRIGGER".to_string(), "-PT10M".to_string()),
+                ("ACTION".to_string(), "DISPLAY".to_string()),
+                ("DESCRIPTION".to_string(), "Reminder".to_string()),
+                ("END".to_string(), "VALARM".to_string()),
+            ]
+        );
+
+        let text = to_ics(&events);
+        for line in [
+            "DTSTART;TZID=America/Sao_Paulo:20260904T100000\r\n",
+            "DTEND;TZID=America/Sao_Paulo:20260904T110000\r\n",
+            "LOCATION:Room 1\r\n",
+            "RRULE:FREQ=WEEKLY;COUNT=4\r\n",
+            "X-FOO;X-BAR=1:baz\r\n",
+            "BEGIN:VALARM\r\nTRIGGER:-PT10M\r\nACTION:DISPLAY\r\nDESCRIPTION:Reminder\r\nEND:VALARM\r\n",
+        ] {
+            assert!(text.contains(line), "missing {line:?} in {text}");
+        }
+        assert_eq!(parse_ics(&text), events);
+    }
+
+    #[test]
+    fn modified_start_drops_stale_raw_params() {
+        let mut events = parse_ics(RICH);
+        events[0].start = dt("2026-09-05T10:00:00");
+        let text = to_ics(&events);
+        assert!(text.contains("DTSTART:20260905T100000\r\n"));
+        assert!(text.contains("DTEND;TZID=America/Sao_Paulo:20260904T110000\r\n"));
+    }
+
+    #[test]
+    fn all_day_dtend_is_exclusive_and_roundtrips() {
+        let text = "BEGIN:VEVENT\r\nUID:d\r\nDTSTART;VALUE=DATE:20260910\r\nDTEND;VALUE=DATE:20260911\r\nSUMMARY:Day off\r\nEND:VEVENT\r\n";
+        let events = parse_ics(text);
+        let event = &events[0];
+        assert!(event.all_day);
+        assert_eq!(event.end_or_start().date(), event.start.date());
+        let out = to_ics(&events);
+        assert!(out.contains("DTSTART;VALUE=DATE:20260910\r\n"));
+        assert!(out.contains("DTEND;VALUE=DATE:20260911\r\n"));
+        assert_eq!(parse_ics(&out), events);
+    }
+
+    #[test]
+    fn new_all_day_event_serializes_as_dates() {
+        let event = Event::new(
+            "Trip",
+            dt("2026-09-10T00:00:00"),
+            Some(dt("2026-09-12T00:00:00")),
+        );
+        assert!(event.all_day);
+        // Inclusive CLI end becomes exclusive ICS DTEND.
+        assert_eq!(event.end, Some(dt("2026-09-13T00:00:00")));
+        assert_eq!(event.end_or_start(), dt("2026-09-12T00:00:00"));
+        let out = to_ics(std::slice::from_ref(&event));
+        assert!(out.contains("DTSTART;VALUE=DATE:20260910\r\n"));
+        assert!(out.contains("DTEND;VALUE=DATE:20260913\r\n"));
+        let reparsed = parse_ics(&out);
+        assert!(reparsed[0].all_day);
+        assert_eq!(reparsed[0].end, event.end);
+
+        let timed = Event::new("Call", dt("2026-09-10T09:00:00"), None);
+        assert!(!timed.all_day);
+        assert!(to_ics(&[timed]).contains("DTSTART:20260910T090000\r\n"));
     }
 }

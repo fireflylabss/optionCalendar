@@ -52,6 +52,12 @@ cargo build -p optioncalendar-cli
 ./target/debug/oca config
 ```
 
+`oca add "X" --at 2026-09-10` (date only) creates an all-day event; `--end`
+is the inclusive last day. Imported ICS files keep everything optionCalendar
+does not interpret (LOCATION, VALARM, TZID params, X-props…) across saves, and
+simple `RRULE`s (`FREQ=DAILY|WEEKLY|MONTHLY|YEARLY` with `INTERVAL`, `COUNT`,
+`UNTIL`) are expanded in `today`/`week`/`month`/`tui`.
+
 `week_start` (`monday` default, ISO 8601, or `sunday`) in
 `~/.option/cal/config.toml` controls the first day of the week in the TUI grid.
 

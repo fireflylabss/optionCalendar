@@ -29,6 +29,12 @@ We only call something **stable** when we mean it.
 
 </details>
 
+## Unreleased
+
+- ICS fidelity: unknown VEVENT properties, nested components (VALARM…) and DTSTART/DTEND parameters (e.g. `TZID`) are preserved across `import`/`add`/`export` instead of being dropped.
+- All-day events: `DTEND;VALUE=DATE` is treated as exclusive (a one-day event no longer shows on two days); `oca add … --at YYYY-MM-DD` creates an all-day event serialized as `VALUE=DATE`.
+- Recurring events: simple `RRULE` (`FREQ=DAILY|WEEKLY|MONTHLY|YEARLY`, `INTERVAL`, `COUNT`, `UNTIL`) are expanded in `today`/`week`/`month`/`tui`.
+
 ## v0.1.0-stable · 08/09/2026
 
 First stable cut: ICS calendar CLI with day/week/month views, tasks bridge, and a read-only TUI. This version was made for CLI with a stable release channel on 08/09/2026 (v0.1.0-stable).
