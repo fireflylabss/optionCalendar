@@ -552,12 +552,12 @@ fn day_item_line(item: &DayItem) -> String {
     }
 }
 
-/// `HH:MM`, or `all-day` (same width padded) when the time is midnight, like [`fmt_dt`].
+/// `HH:MM`, or `all-day` when the time is midnight, like [`fmt_dt`].
 fn fmt_time(value: &NaiveDateTime) -> String {
     if value.format("%H:%M:%S").to_string() == "00:00:00" {
         "all-day".to_string()
     } else {
-        format!("{:<7}", value.format("%H:%M"))
+        value.format("%H:%M").to_string()
     }
 }
 
@@ -644,7 +644,7 @@ mod tests {
             due: d(2026, 9, 10),
             source: "tasks/a.md".into(),
         });
-        assert_eq!(day_item_line(&timed), "09:30    Standup");
+        assert_eq!(day_item_line(&timed), "09:30  Standup");
         assert_eq!(day_item_line(&all_day), "all-day  Holiday");
         assert_eq!(day_item_line(&task), "[ ] pay bill");
     }

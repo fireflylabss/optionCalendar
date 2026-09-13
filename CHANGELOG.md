@@ -31,6 +31,10 @@ We only call something **stable** when we mean it.
 
 ## Unreleased
 
+- CLI integration tests (`crates/optioncalendar-cli/tests/cli.rs`, `assert_cmd` + `predicates`) covering help, add/ls, today/week/month/next/search, rm by index and UID, import/export roundtrip and `config --launch-tui-on-no-args`.
+- `load_settings_from(path)` / `save_settings_to(path, &Settings)` in core; `load_settings`/`save_settings` are thin wrappers. The settings unit test no longer mutates `OPTION_HOME`.
+- Renamed internal `blake_like` to `generate_uid` (it is FNV-1a + wall-clock nanos).
+- Fixed `cargo test --workspace` (stale `month_weeks` test call) and clippy `-D warnings` lints on recent toolchains.
 - `ls` numbers each line with the 1-based index `rm` accepts (with and without `--uid`).
 - `config` prints `week_start` and accepts `--week-start monday|sunday`; flags can be combined in one call.
 - `search` is Unicode case-insensitive (`REUNIÃO` matches `reunião`).
