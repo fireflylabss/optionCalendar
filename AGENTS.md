@@ -37,12 +37,29 @@
 - `packaging/aur/publish.sh` — push local pro AUR (fallback sem workflow).
 - `.SRCINFO` é gerado por `bump.sh`; não editar à mão.
 
+## CI
+- `.github/workflows/ci.yml` — push em `main` e PRs: clona `optionSDK` em `../optionSDK`,
+  `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`,
+  `cargo build --release -p optioncalendar-cli`. Cache via `Swatinem/rust-cache`.
+- `OPTIONSDK_REF` (env no topo de `ci.yml` e `release.yml`) diz qual ref do optionSDK clonar.
+  Hoje é `pull/1/head` (PR que adiciona `App::CAL`); trocar pra tag (`vX.Y.Z`) quando
+  ele for mergeado/taggeado, junto com `_optionsdk_ver` no PKGBUILD.
+- `.github/workflows/release.yml` — push de tag `v*`: verifica tag == versão do workspace,
+  testa, builda release, publica GitHub Release com
+  `optioncalendar-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz` (`optioncalendar` + `oca`),
+  roda `packaging/aur/bump.sh` e anexa PKGBUILD/.SRCINFO como artifact (steps de AUR só
+  rodam quando `OPTIONSDK_REF` é uma tag `v*`, já que o PKGBUILD baixa o tarball da tag do optionSDK).
+- Push pro AUR só roda se o secret `AUR_SSH_KEY` (chave SSH privada cadastrada no AUR)
+  existir no repo; sem ele o step é pulado e o publish é manual via `publish.sh`.
+- Rode localmente antes de abrir PR: `cargo fmt --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace`.
+
 ## Release / Versioning
 - Ver [VERSIONING.md](VERSIONING.md): changelog usa `x.y.z-stable` (ou alpha/beta);
   `Cargo.toml` / tags git ficam numéricos (`0.1.0`, `v0.1.0`).
 - Não marque `stable` no changelog sem estar pronto pra release/AUR.
 - Fluxo: bump Cargo.toml → CHANGELOG.md → commit → `git tag -a vX.Y.Z` → push tag.
 - `bump.sh` espera o tag existir no GitHub antes de hashear o tarball.
+- O push da tag dispara `release.yml` (ver seção CI).
 
 ## Detalhes que já morderam
 - `UID` é variável reservada do bash; use outro nome em scripts de teste.
