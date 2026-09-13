@@ -29,6 +29,13 @@ We only call something **stable** when we mean it.
 
 </details>
 
+## Unreleased
+
+- CLI integration tests (`crates/optioncalendar-cli/tests/cli.rs`, `assert_cmd` + `predicates`) covering help, add/ls, today/week/month/next/search, rm by index and UID, import/export roundtrip and `config --launch-tui-on-no-args`.
+- `load_settings_from(path)` / `save_settings_to(path, &Settings)` in core; `load_settings`/`save_settings` are thin wrappers. The settings unit test no longer mutates `OPTION_HOME`.
+- Renamed internal `blake_like` to `generate_uid` (it is FNV-1a + wall-clock nanos).
+- Fixed `cargo test --workspace` (stale `month_weeks` test call) and clippy `-D warnings` lints on recent toolchains.
+
 ## v0.1.0-stable · 08/09/2026
 
 First stable cut: ICS calendar CLI with day/week/month views, tasks bridge, and a read-only TUI. This version was made for CLI with a stable release channel on 08/09/2026 (v0.1.0-stable).

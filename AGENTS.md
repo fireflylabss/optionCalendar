@@ -6,12 +6,17 @@
 - `CARGO_TARGET_DIR` deve apontar para `$(pwd)/target` nos scripts.
 - `optionSDK` é path dep (`../optionSDK`); o PKGBUILD resolve via download separado.
 - Smoke test: `OPTION_HOME=/tmp/oca-smoke ./target/debug/oca add "Test" --at 2026-09-10T10:00 && ./target/debug/oca ls --uid`.
-- Testes: `cargo test -p optioncalendar-core` (18 testes, sem rede).
+- Testes: `cargo test --workspace` (sem rede) — 19 unitários no core, 3 no TUI e
+  21 de integração do CLI em `crates/optioncalendar-cli/tests/cli.rs`
+  (`assert_cmd` + `predicates`; cada teste roda `oca` com `OPTION_HOME` num tempdir).
+- Lint: `cargo clippy --workspace --all-targets -- -D warnings`.
 
 ## Arquitetura
 - `crates/optioncalendar-core/` — ICS parse/serialize, file store, queries, tasks bridge, `WeekStart`.
   - `ics.rs` — VEVENT minimal (UID/DTSTART/DTEND/SUMMARY/DESCRIPTION). Unknown props ignorados.
   - `store.rs` — `CalStore` (um ICS file), `Settings` (ics_path, launch_tui_on_no_args, week_start).
+    `load_settings`/`save_settings` são wrappers de `load_settings_from(path)`/`save_settings_to(path, &Settings)`;
+    testes usam as versões com path (nunca mexa em `OPTION_HOME` via `std::env` em teste unitário).
   - `query.rs` — day/week/month queries, `today_merged` (events + tasks).
   - `tasks.rs` — bridge optionNotes: `- [ ] text due:YYYY-MM-DD` de `~/Documents/Notes/tasks/*.md`.
   - `week.rs` — `WeekStart` (Monday default ISO 8601, ou Sunday).
@@ -39,7 +44,7 @@
 
 ## Detalhes que já morderam
 - `UID` é variável reservada do bash; use outro nome em scripts de teste.
-- `blake_like` mistura nanos do wall-clock pra evitar colisão de UID em adds idênticos.
+- `generate_uid` (FNV-1a, não BLAKE) mistura nanos do wall-clock pra evitar colisão de UID em adds idênticos.
 - `parse_dt` aceita `YYYYMMDDTHHMMSS`, `YYYY-MM-DDTHH:MM`, `YYYY-MM-DD HH:MM`, `YYYYMMDD`, `YYYY-MM-DD`.
 - Strip de `Z` suffix (UTC designator) — optionCalendar mantém wall-clock time.
 - `CalStore::remove` retorna `bool` (encontrou ou não); `rm` por UID ou índice 1-based.
