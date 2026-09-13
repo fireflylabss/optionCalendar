@@ -41,6 +41,12 @@ We only call something **stable** when we mean it.
 - `load_settings_from(path)` / `save_settings_to(path, &Settings)` in core; `load_settings`/`save_settings` are thin wrappers. The settings unit test no longer mutates `OPTION_HOME`.
 - Renamed internal `blake_like` to `generate_uid` (it is FNV-1a + wall-clock nanos).
 - Fixed `cargo test --workspace` (stale `month_weeks` test call) and clippy `-D warnings` lints on recent toolchains.
+- `ls` numbers each line with the 1-based index `rm` accepts (with and without `--uid`).
+- `config` prints `week_start` and accepts `--week-start monday|sunday`; flags can be combined in one call.
+- `search` is Unicode case-insensitive (`REUNIÃO` matches `reunião`).
+- `today`, `week` and `month` take an optional positional date (`oca today 2026-10-01`, `oca week 2026-10-01`, `oca month 2026-10`); invalid input is a clear error.
+- Tasks due inside the window now appear in `week` and `month`, grouped on their due day as `[ ] text` (core: `merged_between`).
+- `week`/`month` show `all-day` instead of `00:00` for midnight/all-day events.
 
 ## v0.1.0-stable · 08/09/2026
 

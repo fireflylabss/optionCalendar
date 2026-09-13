@@ -17,11 +17,11 @@
   - `store.rs` — `CalStore` (um ICS file), `Settings` (ics_path, launch_tui_on_no_args, week_start).
     `load_settings`/`save_settings` são wrappers de `load_settings_from(path)`/`save_settings_to(path, &Settings)`;
     testes usam as versões com path (nunca mexa em `OPTION_HOME` via `std::env` em teste unitário).
-  - `query.rs` — day/week/month queries, `today_merged` (events + tasks).
+  - `query.rs` — day/week/month queries, `today_merged` (events + tasks due/overdue), `merged_between` (events + tasks due in a range).
   - `tasks.rs` — bridge optionNotes: `- [ ] text due:YYYY-MM-DD` de `~/Documents/Notes/tasks/*.md`.
   - `week.rs` — `WeekStart` (Monday default ISO 8601, ou Sunday).
 - `crates/optioncalendar-cli/` — `oca` / `optioncalendar` (mesmo entrypoint).
-  - `main.rs` — clap CLI: add, ls, today, week, month, next, search, edit, rm, import, export, tui, config.
+  - `main.rs` — clap CLI: add, ls (numbered), today/week/month (optional positional date), next, search (Unicode case-insensitive), edit, rm, import, export, tui, config (`--launch-tui-on-no-args`, `--week-start`).
     Flag global `--json` (ls/today/week/month/next/search) imprime array JSON estável em stdout.
   - `tests/edit_json.rs` — testes de integração de `edit` e `--json`.
   - `tui.rs` — month + agenda view read-only (crossterm). Grid segue `week_start`.
@@ -66,7 +66,7 @@
 - `generate_uid` (FNV-1a, não BLAKE) mistura nanos do wall-clock pra evitar colisão de UID em adds idênticos.
 - `parse_dt` aceita `YYYYMMDDTHHMMSS`, `YYYY-MM-DDTHH:MM`, `YYYY-MM-DD HH:MM`, `YYYYMMDD`, `YYYY-MM-DD`.
 - Strip de `Z` suffix (UTC designator) — optionCalendar mantém wall-clock time.
-- `CalStore::remove` e `CalStore::update` retornam `bool` (encontrou ou não); `rm`/`edit` por UID ou índice 1-based (`resolve_id`).
+- `CalStore::remove` e `CalStore::update` retornam `bool` (encontrou ou não); `rm`/`edit` por UID ou índice 1-based (`resolve_id`, o mesmo índice que `oca ls` imprime).
 - `edit` nunca muda o UID (`CalStore::update` restaura o UID após o closure); valida `end >= start`; sem flags = erro "nothing to change".
 - `Event`/`TaskDue` derivam `Serialize` com datas ISO 8601 (`YYYY-MM-DDTHH:MM:SS` / `YYYY-MM-DD`).
 - Tasks bridge nunca falha: dir/vault ausente = lista vazia.

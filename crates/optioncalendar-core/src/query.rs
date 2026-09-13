@@ -13,6 +13,14 @@ pub enum DayItem {
 }
 
 impl DayItem {
+    /// Day this item belongs to (event start day, or task due day).
+    pub fn date(&self) -> NaiveDate {
+        match self {
+            DayItem::Event(event) => event.start.date(),
+            DayItem::Task(task) => task.due,
+        }
+    }
+
     /// Sort key: timed entries first by time, then all-day items by title.
     fn sort_key(&self) -> (NaiveDate, String) {
         match self {
@@ -89,7 +97,31 @@ pub fn today_merged(events: &[Event], tasks: &[TaskDue], date: NaiveDate) -> Vec
             .cloned()
             .map(DayItem::Task),
     );
-    items.sort_by_key(|a| a.sort_key());
+    items.sort_by_key(|item| item.sort_key());
+    items
+}
+
+/// Merged range view: events touching `[start, end]` plus tasks due within
+/// the same window, sorted by day then time (tasks sort after timed events).
+pub fn merged_between(
+    events: &[Event],
+    tasks: &[TaskDue],
+    start: NaiveDate,
+    end: NaiveDate,
+) -> Vec<DayItem> {
+    let mut items: Vec<DayItem> = events_between(events, start, end)
+        .into_iter()
+        .cloned()
+        .map(DayItem::Event)
+        .collect();
+    items.extend(
+        tasks
+            .iter()
+            .filter(|task| task.due >= start && task.due <= end)
+            .cloned()
+            .map(DayItem::Task),
+    );
+    items.sort_by_key(|item| item.sort_key());
     items
 }
 
@@ -135,6 +167,36 @@ mod tests {
         // Overdue tasks surface before today's timed events.
         assert!(matches!(items[0], DayItem::Task(_)));
         assert!(matches!(items[1], DayItem::Event(_)));
+    }
+
+    #[test]
+    fn merged_between_groups_tasks_on_due_day_within_window() {
+        let start = NaiveDate::from_ymd_opt(2026, 9, 7).unwrap();
+        let end = NaiveDate::from_ymd_opt(2026, 9, 13).unwrap();
+        let events = vec![
+            event("Standup", "2026-09-08T10:00", None),
+            event("Outside", "2026-09-20T10:00", None),
+        ];
+        let task = |text: &str, y: i32, m: u32, d: u32| TaskDue {
+            text: text.into(),
+            due: NaiveDate::from_ymd_opt(y, m, d).unwrap(),
+            source: "tasks/a.md".into(),
+        };
+        let tasks = vec![
+            task("before", 2026, 9, 6),
+            task("same day", 2026, 9, 8),
+            task("later", 2026, 9, 12),
+            task("after", 2026, 9, 14),
+        ];
+        let items = merged_between(&events, &tasks, start, end);
+        assert_eq!(items.len(), 3);
+        assert!(matches!(&items[0], DayItem::Event(e) if e.summary == "Standup"));
+        assert!(matches!(&items[1], DayItem::Task(t) if t.text == "same day"));
+        assert_eq!(
+            items[1].date(),
+            NaiveDate::from_ymd_opt(2026, 9, 8).unwrap()
+        );
+        assert!(matches!(&items[2], DayItem::Task(t) if t.text == "later"));
     }
 
     #[test]

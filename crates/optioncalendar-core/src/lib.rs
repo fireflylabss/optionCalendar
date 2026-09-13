@@ -11,7 +11,9 @@ pub mod week;
 
 pub use error::{Error, Result};
 pub use ics::{Event, format_dt, parse_dt, parse_ics, to_ics};
-pub use query::{DayItem, events_between, events_on, month_range, occurs_on, today, today_merged};
+pub use query::{
+    DayItem, events_between, events_on, merged_between, month_range, occurs_on, today, today_merged,
+};
 pub use store::{
     CalStore, Settings, default_ics_path, load_settings, load_settings_from, save_settings,
     save_settings_to,
