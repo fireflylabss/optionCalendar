@@ -48,8 +48,9 @@
   `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`,
   `cargo build --release -p optioncalendar-cli`. Cache via `Swatinem/rust-cache`.
 - `OPTIONSDK_REF` (env no topo de `ci.yml` e `release.yml`) diz qual ref do optionSDK clonar.
-  Hoje é `pull/1/head` (PR que adiciona `App::CAL`); trocar pra tag (`vX.Y.Z`) quando
-  ele for mergeado/taggeado, junto com `_optionsdk_ver` no PKGBUILD.
+  Hoje é `master` (já tem `App::CAL`); trocar pra tag (`v0.1.4`) quando ela for publicada,
+  junto com `_optionsdk_ver` no PKGBUILD. Steps de AUR decidem `AUR_ENABLED` num step
+  (o contexto `env` não existe em `env` de job).
 - `.github/workflows/release.yml` — push de tag `v*`: verifica tag == versão do workspace,
   testa, builda release, publica GitHub Release com
   `optioncalendar-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz` (`optioncalendar` + `oca`),

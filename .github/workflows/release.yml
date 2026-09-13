@@ -9,9 +9,9 @@ permissions:
   contents: write
 
 env:
-  # Keep in sync with ci.yml. Once App::CAL ships in a tagged optionSDK release,
-  # switch this to that tag (and bump _optionsdk_ver in packaging/aur/PKGBUILD).
-  OPTIONSDK_REF: pull/1/head
+  # Keep in sync with ci.yml. Switch to the optionSDK tag that ships App::CAL (v0.1.4)
+  # once it exists, and bump _optionsdk_ver in packaging/aur/PKGBUILD accordingly.
+  OPTIONSDK_REF: master
   CARGO_TERM_COLOR: always
 
 jobs:
@@ -19,13 +19,20 @@ jobs:
     runs-on: ubuntu-latest
     env:
       HAS_AUR_KEY: ${{ secrets.AUR_SSH_KEY != '' }}
-      # AUR packaging pulls optionSDK from the tagged tarball (_optionsdk_ver in PKGBUILD),
-      # so it is only valid once OPTIONSDK_REF is itself a tag.
-      AUR_ENABLED: ${{ startsWith(env.OPTIONSDK_REF, 'v') }}
     steps:
       - uses: actions/checkout@v4
         with:
           path: optionCalendar
+
+      # AUR packaging pulls optionSDK from the tagged tarball (_optionsdk_ver in PKGBUILD),
+      # so it is only valid once OPTIONSDK_REF is itself a tag. (The `env` context is not
+      # available in job-level `env`, hence a step.)
+      - name: Decide whether AUR steps run
+        run: |
+          case "$OPTIONSDK_REF" in
+            v*) echo "AUR_ENABLED=true" >> "$GITHUB_ENV" ;;
+            *)  echo "AUR_ENABLED=false" >> "$GITHUB_ENV" ;;
+          esac
 
       - name: Clone optionSDK
         run: |

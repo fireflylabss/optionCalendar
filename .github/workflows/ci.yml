@@ -11,8 +11,8 @@ env:
   #   - "pull/N/head" → an open PR on optionSDK
   #   - "v0.1.4"      → a tag (switch to this once App::CAL ships in a tagged optionSDK
   #                     release; also bump _optionsdk_ver in packaging/aur/PKGBUILD)
-  # App::CAL currently only exists in fireflylabss/optionSDK PR #1, so we use it until merged.
-  OPTIONSDK_REF: pull/1/head
+  # App::CAL is merged on optionSDK master; switch to v0.1.4 once that tag is published.
+  OPTIONSDK_REF: master
   CARGO_TERM_COLOR: always
 
 jobs:
