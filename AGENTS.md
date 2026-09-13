@@ -55,8 +55,11 @@
 - `CalStore::remove` retorna `bool` (encontrou ou não); `rm` por UID ou índice 1-based.
 - Tasks bridge nunca falha: dir/vault ausente = lista vazia.
 - `DTEND;VALUE=DATE` é EXCLUSIVO no ICS: `Event.end` de um all-day guarda o dia seguinte;
-  use `end_or_start()` (inclusivo) nas queries. `Event::new` com datas sem hora vira all-day e
-  converte o `end` inclusivo do CLI para exclusivo.
+  use `end_or_start()` (inclusivo) nas queries. `Event::new` é sempre timed (meia-noite explícita
+  continua timed); `Event::new_all_day(start, last_day)` recebe o último dia inclusivo e guarda
+  exclusivo. O CLI decide por `is_date_only(--at/--end)`.
+- Expansão de RRULE começa em `first_candidate` (estimativa pela janela) e examina no máximo
+  10k ocorrências a partir dali — séries antigas (1990…) ainda aparecem hoje.
 - Props conhecidas dentro de sub-componentes (ex. `DESCRIPTION` de um VALARM) não pertencem ao
   evento: `find_prop` só olha depth 0.
 - Ocorrências expandidas de RRULE mantêm o mesmo `uid`; `rm` opera em `store.events`, não nas queries.

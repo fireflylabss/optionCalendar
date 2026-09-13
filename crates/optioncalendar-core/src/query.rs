@@ -45,8 +45,27 @@ struct Rule {
     until_date_only: bool,
 }
 
-/// Hard cap on expanded occurrences per event, so a bad rule can't spin.
+/// Hard cap on occurrences examined per query, so a bad rule can't spin.
 const MAX_OCCURRENCES: u32 = 10_000;
+
+/// Index of the first occurrence that might still touch `from` (a lower bound,
+/// so the scan can skip the bulk of an old series).
+fn first_candidate(rule: &Rule, event: &Event, from: NaiveDate) -> u32 {
+    let span = event.end_or_start().date() - event.start.date();
+    let gap = from - event.start.date() - span;
+    if gap <= Duration::zero() {
+        return 0;
+    }
+    let days = gap.num_days();
+    let steps = match rule.freq {
+        Freq::Daily => days,
+        Freq::Weekly => days / 7,
+        // Month/year lengths vary; use the longest so we never overshoot.
+        Freq::Monthly => days / 31,
+        Freq::Yearly => days / 366,
+    };
+    u32::try_from(steps / i64::from(rule.interval)).unwrap_or(u32::MAX)
+}
 
 fn parse_rule(raw: &str) -> Option<Rule> {
     let mut rule = Rule {
@@ -74,7 +93,7 @@ fn parse_rule(raw: &str) -> Option<Rule> {
                 has_freq = true;
             }
             "INTERVAL" => rule.interval = value.parse().ok().filter(|i| *i > 0)?,
-            "COUNT" => rule.count = Some(value.parse().ok()?),
+            "COUNT" => rule.count = Some(value.parse().ok().filter(|c| *c > 0)?),
             "UNTIL" => {
                 rule.until = Some(parse_dt(value).ok()?);
                 rule.until_date_only = is_date_only(value);
@@ -116,8 +135,12 @@ pub fn occurrences_between(event: &Event, from: NaiveDate, to: NaiveDate) -> Vec
         };
     };
     let mut hits = Vec::new();
-    let limit = rule.count.unwrap_or(MAX_OCCURRENCES).min(MAX_OCCURRENCES);
-    for n in 0..limit {
+    let first = first_candidate(&rule, event, from);
+    let limit = rule
+        .count
+        .unwrap_or(u32::MAX)
+        .min(first.saturating_add(MAX_OCCURRENCES));
+    for n in first..limit {
         let Some(start) = nth_start(&rule, event.start, n) else {
             break;
         };
@@ -125,8 +148,12 @@ pub fn occurrences_between(event: &Event, from: NaiveDate, to: NaiveDate) -> Vec
             break;
         }
         let mut occurrence = event.clone();
-        occurrence.end = event.end.map(|end| end + (start - event.start));
-        occurrence.start = start;
+        if n > 0 {
+            occurrence.end = event.end.map(|end| end + (start - event.start));
+            occurrence.start = start;
+            occurrence.start_raw = None;
+            occurrence.end_raw = None;
+        }
         if touches(&occurrence) {
             hits.push(occurrence);
         }
@@ -327,6 +354,27 @@ mod tests {
         e.rrule = Some("garbage".into());
         assert!(occurs_on(&e, day("2026-09-01")));
         assert!(!occurs_on(&e, day("2026-09-02")));
+        e.rrule = Some("FREQ=DAILY;COUNT=0".into());
+        assert!(occurs_on(&e, day("2026-09-01")));
+        assert!(!occurs_on(&e, day("2026-09-02")));
+    }
+
+    #[test]
+    fn old_series_still_reaches_far_windows() {
+        let mut daily = event("Old", "1990-01-01T07:00", Some("1990-01-03T07:00"));
+        daily.rrule = Some("FREQ=DAILY".into());
+        let hits = events_between(&[daily.clone()], day("2026-09-10"), day("2026-09-10"));
+        // Three-day span: occurrences starting 09-08, 09-09 and 09-10 all touch the day.
+        assert_eq!(hits.len(), 3);
+        assert_eq!(hits[0].start.date(), day("2026-09-08"));
+        assert!(hits[0].start_raw.is_none());
+        daily.rrule = Some("FREQ=DAILY;COUNT=100".into());
+        assert!(!occurs_on(&daily, day("2026-09-10")));
+
+        let mut monthly = event("Rent", "1990-01-31T09:00", None);
+        monthly.rrule = Some("FREQ=MONTHLY;INTERVAL=2".into());
+        assert!(occurs_on(&monthly, day("2026-09-30")));
+        assert!(!occurs_on(&monthly, day("2026-08-31")));
     }
 
     #[test]

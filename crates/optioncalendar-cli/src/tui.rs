@@ -627,7 +627,7 @@ fn day_sort_key(item: &DayItem) -> (String, String) {
 }
 
 fn agenda_summary(events: &[CalEvent], tasks: &[TaskDue], selected: NaiveDate) -> String {
-    let n_events = events.iter().filter(|e| occurs_on(e, selected)).count();
+    let n_events = events_on(events, selected).len();
     let n_tasks = tasks.iter().filter(|t| t.due == selected).count();
     let day = selected.format("%Y-%m-%d").to_string();
     match (n_events, n_tasks) {

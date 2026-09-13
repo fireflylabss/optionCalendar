@@ -5,7 +5,7 @@
 //! VALARM) is kept verbatim in [`Event::extra`] and written back by [`to_ics`],
 //! so files from other calendars survive a load/save cycle.
 
-use chrono::{Duration, NaiveDateTime, NaiveTime};
+use chrono::{Duration, NaiveDate, NaiveDateTime, NaiveTime};
 
 use crate::{Error, Result};
 
@@ -34,9 +34,7 @@ pub struct Event {
 }
 
 impl Event {
-    /// Build a new event. A midnight `start` with no time (and an `end`, if
-    /// any, also at midnight) becomes an all-day event; for all-day events the
-    /// given `end` is the **inclusive** last day and is stored exclusive.
+    /// Build a new timed event (see [`Event::new_all_day`] for date-only ones).
     pub fn new(
         summary: impl Into<String>,
         start: NaiveDateTime,
@@ -47,24 +45,31 @@ impl Event {
             "{:x}@optioncalendar",
             generate_uid(&summary, &start, end.as_ref())
         );
-        let all_day = is_midnight(&start) && end.is_none_or(|e| is_midnight(&e));
-        let end = if all_day {
-            end.map(|e| e + Duration::days(1))
-        } else {
-            end
-        };
         Self {
             uid,
             summary,
             description: String::new(),
             start,
             end,
-            all_day,
+            all_day: false,
             rrule: None,
             extra: Vec::new(),
             start_raw: None,
             end_raw: None,
         }
+    }
+
+    /// All-day event from `start` through `last_day` (inclusive); the stored
+    /// `end` is the exclusive ICS `DTEND`.
+    pub fn new_all_day(
+        summary: impl Into<String>,
+        start: NaiveDate,
+        last_day: Option<NaiveDate>,
+    ) -> Self {
+        let end = last_day.map(|d| (d + Duration::days(1)).and_time(NaiveTime::MIN));
+        let mut event = Self::new(summary, start.and_time(NaiveTime::MIN), end);
+        event.all_day = true;
+        event
     }
 
     /// Inclusive end: `end` if set (minus one day for all-day events, whose
@@ -79,10 +84,6 @@ impl Event {
             None => self.start,
         }
     }
-}
-
-fn is_midnight(value: &NaiveDateTime) -> bool {
-    value.time() == NaiveTime::MIN
 }
 
 /// FNV-1a hash of summary/start/end mixed with wall-clock nanos for generated
@@ -270,7 +271,8 @@ fn build_event(props: &[(String, String)]) -> Option<Event> {
     let mut extra = Vec::new();
     for (left, value) in props {
         let name = prop_name(left);
-        if depth > 0 || !KNOWN.contains(&name.as_str()) {
+        let unparsed_end = name == "DTEND" && end.is_none();
+        if depth > 0 || unparsed_end || !KNOWN.contains(&name.as_str()) {
             extra.push((left.clone(), value.clone()));
         }
         match name.as_str() {
@@ -462,10 +464,10 @@ mod tests {
 
     #[test]
     fn new_all_day_event_serializes_as_dates() {
-        let event = Event::new(
+        let event = Event::new_all_day(
             "Trip",
-            dt("2026-09-10T00:00:00"),
-            Some(dt("2026-09-12T00:00:00")),
+            dt("2026-09-10T00:00:00").date(),
+            Some(dt("2026-09-12T00:00:00").date()),
         );
         assert!(event.all_day);
         // Inclusive CLI end becomes exclusive ICS DTEND.
@@ -481,5 +483,22 @@ mod tests {
         let timed = Event::new("Call", dt("2026-09-10T09:00:00"), None);
         assert!(!timed.all_day);
         assert!(to_ics(&[timed]).contains("DTSTART:20260910T090000\r\n"));
+
+        let midnight = Event::new(
+            "Maintenance",
+            dt("2026-09-10T00:00:00"),
+            Some(dt("2026-09-11T00:00:00")),
+        );
+        assert!(!midnight.all_day);
+        assert_eq!(midnight.end, Some(dt("2026-09-11T00:00:00")));
+        assert!(to_ics(&[midnight]).contains("DTEND:20260911T000000\r\n"));
+    }
+
+    #[test]
+    fn unparseable_dtend_is_kept_verbatim() {
+        let ics = "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:x\r\nDTSTART:20260910T100000\r\nDTEND;TZID=Mars/Olympus:garbage\r\nSUMMARY:S\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+        let events = parse_ics(ics);
+        assert_eq!(events[0].end, None);
+        assert!(to_ics(&events).contains("DTEND;TZID=Mars/Olympus:garbage\r\n"));
     }
 }

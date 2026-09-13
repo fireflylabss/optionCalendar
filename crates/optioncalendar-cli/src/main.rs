@@ -12,8 +12,8 @@ use clap::{
 };
 use option_sdk::App;
 use optioncalendar_core::{
-    CalStore, DayItem, Event, due_tasks_or_empty, events_between, load_settings, month_range,
-    parse_dt, to_ics, today, today_merged,
+    CalStore, DayItem, Event, due_tasks_or_empty, events_between, is_date_only, load_settings,
+    month_range, parse_dt, to_ics, today, today_merged,
 };
 
 fn cli_styles() -> Styles {
@@ -181,6 +181,7 @@ fn cmd_add(summary: &str, at: &str, end: Option<&str>, description: Option<&str>
         bail!("summary cannot be empty");
     }
     let start = parse_cli_dt(at)?;
+    let all_day = is_date_only(at) && end.is_none_or(is_date_only);
     let end = end.map(parse_cli_dt).transpose()?;
     if let Some(end) = end
         && end < start
@@ -192,7 +193,11 @@ fn cmd_add(summary: &str, at: &str, end: Option<&str>, description: Option<&str>
         );
     }
     let mut store = open_store()?;
-    let mut event = Event::new(summary.trim(), start, end);
+    let mut event = if all_day {
+        Event::new_all_day(summary.trim(), start.date(), end.map(|e| e.date()))
+    } else {
+        Event::new(summary.trim(), start, end)
+    };
     if let Some(desc) = description {
         event.description = desc.trim().to_string();
     }
