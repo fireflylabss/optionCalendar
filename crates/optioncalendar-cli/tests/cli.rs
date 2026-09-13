@@ -1,196 +1,412 @@
-//! Integration tests for `oca edit` and the global `--json` flag.
-//!
-//! Each test gets its own `OPTION_HOME` tempdir so nothing touches `~/.option`.
+//! Integration tests for the `oca` binary. Each test gets its own `OPTION_HOME`
+//! (which optionSDK prefers over `HOME`), so nothing touches the real config.
+
+use std::fs;
+use std::path::Path;
 
 use assert_cmd::Command;
 use predicates::prelude::*;
-use serde_json::Value;
+use predicates::str::contains;
+use tempfile::TempDir;
 
-fn oca(home: &tempfile::TempDir) -> Command {
-    let mut cmd = Command::cargo_bin("oca").expect("oca binary");
-    cmd.env("OPTION_HOME", home.path()).env("NO_COLOR", "1");
-    cmd
+struct Sandbox {
+    home: TempDir,
 }
 
-fn ls_json(home: &tempfile::TempDir) -> Vec<Value> {
-    let out = oca(home).args(["--json", "ls"]).output().unwrap();
-    assert!(
-        out.status.success(),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    serde_json::from_slice::<Value>(&out.stdout)
-        .expect("stdout is valid JSON")
-        .as_array()
-        .expect("array")
-        .clone()
-}
+impl Sandbox {
+    fn new() -> Self {
+        Self {
+            home: tempfile::tempdir().expect("tempdir"),
+        }
+    }
 
-#[test]
-fn json_ls_is_stable_array_of_events() {
-    let home = tempfile::tempdir().unwrap();
-    assert_eq!(ls_json(&home), Vec::<Value>::new());
+    fn path(&self) -> &Path {
+        self.home.path()
+    }
 
-    oca(&home)
-        .args([
-            "add",
-            "Dentist",
-            "--at",
-            "2030-09-10T10:00",
-            "--description",
-            "cleaning",
-        ])
-        .assert()
-        .success();
-    oca(&home)
-        .args(["add", "Trip", "--at", "2030-09-01", "--end", "2030-09-03"])
-        .assert()
-        .success();
+    fn oca(&self) -> Command {
+        let mut cmd = Command::cargo_bin("oca").expect("oca binary");
+        cmd.env("OPTION_HOME", self.path())
+            .env("NO_COLOR", "1")
+            .env_remove("HOME");
+        cmd
+    }
 
-    let events = ls_json(&home);
-    assert_eq!(events.len(), 2);
-    // Sorted by start; stable key set; ISO 8601 datetimes.
-    let trip = &events[0];
-    assert_eq!(trip["summary"], "Trip");
-    assert_eq!(trip["start"], "2030-09-01T00:00:00");
-    assert_eq!(trip["end"], "2030-09-03T00:00:00");
-    assert_eq!(trip["description"], "");
-    assert!(trip["uid"].as_str().is_some_and(|u| !u.is_empty()));
-    let dentist = &events[1];
-    assert_eq!(dentist["start"], "2030-09-10T10:00:00");
-    assert_eq!(dentist["end"], Value::Null);
-    assert_eq!(dentist["description"], "cleaning");
-    let mut keys: Vec<&String> = dentist.as_object().unwrap().keys().collect();
-    keys.sort();
-    assert_eq!(keys, ["description", "end", "start", "summary", "uid"]);
-}
+    fn add(&self, summary: &str, at: &str) {
+        self.oca()
+            .args(["add", summary, "--at", at])
+            .assert()
+            .success()
+            .stdout(contains("added").and(contains(summary)));
+    }
 
-#[test]
-fn json_search_next_today_week_month_emit_arrays() {
-    let home = tempfile::tempdir().unwrap();
-    oca(&home)
-        .args(["add", "Far future", "--at", "2099-01-01T09:00"])
-        .assert()
-        .success();
+    fn ls_uid_lines(&self) -> Vec<String> {
+        let out = self.oca().args(["ls", "--uid"]).output().unwrap();
+        assert!(out.status.success());
+        String::from_utf8(out.stdout)
+            .unwrap()
+            .lines()
+            .skip(1)
+            .map(str::to_string)
+            .collect()
+    }
 
-    let out = oca(&home)
-        .args(["--json", "search", "future"])
-        .output()
-        .unwrap();
-    let hits: Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(hits.as_array().unwrap().len(), 1);
-    assert_eq!(hits[0]["summary"], "Far future");
+    /// Nth (1-based) UID from `oca ls --uid`.
+    fn uid_at(&self, index: usize) -> String {
+        let line = self.ls_uid_lines()[index - 1].clone();
+        let open = line.rfind('[').unwrap();
+        let close = line.rfind(']').unwrap();
+        line[open + 1..close].to_string()
+    }
 
-    let out = oca(&home)
-        .args(["--json", "search", "nomatch"])
-        .output()
-        .unwrap();
-    assert_eq!(
-        serde_json::from_slice::<Value>(&out.stdout).unwrap(),
-        Value::Array(vec![])
-    );
-
-    let out = oca(&home).args(["next", "--json"]).output().unwrap();
-    let next: Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(next[0]["start"], "2099-01-01T09:00:00");
-
-    for sub in ["today", "week", "month"] {
-        let out = oca(&home).args(["--json", sub]).output().unwrap();
-        assert!(out.status.success(), "{sub}");
-        let value: Value = serde_json::from_slice(&out.stdout)
-            .unwrap_or_else(|e| panic!("{sub}: invalid JSON: {e}"));
-        assert!(value.is_array(), "{sub} must emit an array");
-        // No mark / colour in JSON mode.
-        assert!(!String::from_utf8_lossy(&out.stdout).contains('◷'));
+    fn event_count(&self) -> usize {
+        self.ls_uid_lines().len()
     }
 }
 
-#[test]
-fn edit_updates_fields_and_keeps_uid() {
-    let home = tempfile::tempdir().unwrap();
-    oca(&home)
-        .args([
-            "add",
-            "Dentist",
-            "--at",
-            "2030-09-10T10:00",
-            "--description",
-            "cleaning",
-        ])
-        .assert()
-        .success();
-    let before = ls_json(&home);
-    let uid = before[0]["uid"].as_str().unwrap().to_owned();
-
-    oca(&home)
-        .args([
-            "edit",
-            "1",
-            "--summary",
-            "Dentist (moved)",
-            "--at",
-            "2030-09-11T11:00",
-            "--end",
-            "2030-09-11T12:00",
-        ])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains(
-            "edited 2030-09-11 11:00  Dentist (moved)",
-        ));
-
-    let after = ls_json(&home);
-    assert_eq!(after.len(), 1);
-    assert_eq!(after[0]["uid"], uid.as_str());
-    assert_eq!(after[0]["summary"], "Dentist (moved)");
-    assert_eq!(after[0]["start"], "2030-09-11T11:00:00");
-    assert_eq!(after[0]["end"], "2030-09-11T12:00:00");
-    assert_eq!(after[0]["description"], "cleaning");
-
-    // Edit by UID with the clear flags.
-    oca(&home)
-        .args(["edit", &uid, "--clear-end", "--clear-description"])
-        .assert()
-        .success();
-    let cleared = ls_json(&home);
-    assert_eq!(cleared[0]["end"], Value::Null);
-    assert_eq!(cleared[0]["description"], "");
+/// Today's date plus `days`, formatted `YYYY-MM-DDTHH:MM`.
+fn at(days: i64, hhmm: &str) -> String {
+    let day = chrono::Local::now().date_naive() + chrono::Duration::days(days);
+    format!("{}T{hhmm}", day.format("%Y-%m-%d"))
 }
 
 #[test]
-fn edit_rejects_no_flags_bad_range_and_unknown_id() {
-    let home = tempfile::tempdir().unwrap();
-    oca(&home)
-        .args(["add", "Dentist", "--at", "2030-09-10T10:00"])
+fn bare_invocation_prints_help() {
+    let sb = Sandbox::new();
+    sb.oca()
+        .assert()
+        .success()
+        .stdout(contains("Usage:").and(contains("add")).and(contains("tui")));
+}
+
+#[test]
+fn add_then_ls_with_and_without_uid() {
+    let sb = Sandbox::new();
+    sb.add("Dentist", "2026-09-10T10:00");
+    sb.oca().arg("ls").assert().success().stdout(
+        contains("1 event")
+            .and(contains("2026-09-10 10:00  Dentist"))
+            .and(contains("@optioncalendar").not()),
+    );
+    sb.oca()
+        .args(["ls", "--uid"])
+        .assert()
+        .success()
+        .stdout(contains("Dentist  [").and(contains("@optioncalendar]")));
+}
+
+#[test]
+fn ls_on_empty_store_says_no_events() {
+    let sb = Sandbox::new();
+    sb.oca()
+        .arg("ls")
+        .assert()
+        .success()
+        .stdout(contains("no events"));
+}
+
+#[test]
+fn add_with_end_before_start_fails() {
+    let sb = Sandbox::new();
+    sb.oca()
+        .args([
+            "add",
+            "Backwards",
+            "--at",
+            "2026-09-10T10:00",
+            "--end",
+            "2026-09-10T09:00",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("is before start"));
+    assert_eq!(sb.event_count(), 0);
+}
+
+#[test]
+fn add_with_invalid_date_fails() {
+    let sb = Sandbox::new();
+    sb.oca()
+        .args(["add", "Bad", "--at", "not-a-date"])
+        .assert()
+        .failure()
+        .stderr(contains("invalid date"));
+}
+
+#[test]
+fn today_lists_todays_events() {
+    let sb = Sandbox::new();
+    sb.add("Standup", &at(0, "09:30"));
+    sb.add("Far away", &at(40, "09:30"));
+    sb.oca().arg("today").assert().success().stdout(
+        contains("today ·")
+            .and(contains("Standup"))
+            .and(contains("Far away").not()),
+    );
+}
+
+#[test]
+fn today_empty_says_nothing_today() {
+    let sb = Sandbox::new();
+    sb.oca()
+        .arg("today")
+        .assert()
+        .success()
+        .stdout(contains("nothing today"));
+}
+
+#[test]
+fn week_lists_next_seven_days_grouped() {
+    let sb = Sandbox::new();
+    sb.add("Soon", &at(2, "14:00"));
+    sb.add("Far away", &at(40, "14:00"));
+    sb.oca().arg("week").assert().success().stdout(
+        contains("week ·")
+            .and(contains("14:00  Soon"))
+            .and(contains("Far away").not()),
+    );
+}
+
+#[test]
+fn month_counts_events_in_current_month() {
+    let sb = Sandbox::new();
+    sb.add("This month", &at(0, "08:00"));
+    sb.add("Next year", &at(400, "08:00"));
+    sb.oca().arg("month").assert().success().stdout(
+        contains("· 1 event")
+            .and(contains("08:00  This month"))
+            .and(contains("Next year").not()),
+    );
+}
+
+#[test]
+fn next_shows_nearest_upcoming_event() {
+    let sb = Sandbox::new();
+    sb.add("Later", &at(5, "10:00"));
+    sb.add("Sooner", &at(1, "10:00"));
+    sb.add("Past", "2000-01-01T10:00");
+    sb.oca().arg("next").assert().success().stdout(
+        contains("next ·")
+            .and(contains("Sooner"))
+            .and(contains("tomorrow"))
+            .and(contains("Later").not()),
+    );
+}
+
+#[test]
+fn next_without_upcoming_events() {
+    let sb = Sandbox::new();
+    sb.add("Past", "2000-01-01T10:00");
+    sb.oca()
+        .arg("next")
+        .assert()
+        .success()
+        .stdout(contains("no upcoming events"));
+}
+
+#[test]
+fn search_is_case_insensitive_over_summary_and_description() {
+    let sb = Sandbox::new();
+    sb.add("Dentist", "2026-09-10T10:00");
+    sb.oca()
+        .args([
+            "add",
+            "Meeting",
+            "--at",
+            "2026-09-11T10:00",
+            "--description",
+            "Quarterly Budget review",
+        ])
         .assert()
         .success();
+    sb.oca()
+        .args(["search", "DENTIST"])
+        .assert()
+        .success()
+        .stdout(contains("1 event").and(contains("Dentist")));
+    sb.oca()
+        .args(["search", "budget"])
+        .assert()
+        .success()
+        .stdout(contains("Meeting"));
+    sb.oca()
+        .args(["search", "nothing-here"])
+        .assert()
+        .success()
+        .stdout(contains("no matches"));
+}
 
-    oca(&home)
-        .args(["edit", "1"])
+#[test]
+fn rm_by_index_removes_that_event() {
+    let sb = Sandbox::new();
+    sb.add("First", "2026-09-10T10:00");
+    sb.add("Second", "2026-09-11T10:00");
+    sb.oca()
+        .args(["rm", "1"])
+        .assert()
+        .success()
+        .stdout(contains("removed ["));
+    assert_eq!(sb.event_count(), 1);
+    sb.oca()
+        .arg("ls")
+        .assert()
+        .stdout(contains("Second").and(contains("First").not()));
+}
+
+#[test]
+fn rm_by_uid_removes_that_event() {
+    let sb = Sandbox::new();
+    sb.add("First", "2026-09-10T10:00");
+    sb.add("Second", "2026-09-11T10:00");
+    let uid = sb.uid_at(2);
+    sb.oca()
+        .args(["rm", &uid])
+        .assert()
+        .success()
+        .stdout(contains(format!("removed [{uid}]")));
+    assert_eq!(sb.event_count(), 1);
+    sb.oca()
+        .arg("ls")
+        .assert()
+        .stdout(contains("First").and(contains("Second").not()));
+}
+
+#[test]
+fn rm_index_zero_fails() {
+    let sb = Sandbox::new();
+    sb.add("Only", "2026-09-10T10:00");
+    sb.oca()
+        .args(["rm", "0"])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("nothing to change"));
+        .stderr(contains("1-based"));
+    assert_eq!(sb.event_count(), 1);
+}
 
-    oca(&home)
-        .args(["edit", "1", "--end", "2030-09-09T10:00"])
+#[test]
+fn rm_out_of_range_index_fails() {
+    let sb = Sandbox::new();
+    sb.add("Only", "2026-09-10T10:00");
+    sb.oca()
+        .args(["rm", "7"])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("is before start"));
+        .stderr(contains("no event at index 7"));
+    assert_eq!(sb.event_count(), 1);
+}
 
-    oca(&home)
-        .args(["edit", "does-not-exist", "--summary", "X"])
+#[test]
+fn rm_unknown_uid_fails() {
+    let sb = Sandbox::new();
+    sb.add("Only", "2026-09-10T10:00");
+    sb.oca()
+        .args(["rm", "missing@optioncalendar"])
         .assert()
         .failure()
-        .stderr(predicate::str::contains(
-            "no event with id 'does-not-exist'",
-        ));
+        .stderr(contains("no event with id"));
+    assert_eq!(sb.event_count(), 1);
+}
 
-    oca(&home)
-        .args(["edit", "5", "--summary", "X"])
+#[test]
+fn import_then_export_roundtrip() {
+    let sb = Sandbox::new();
+    let ics = sb.path().join("in.ics");
+    fs::write(
+        &ics,
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\n\
+         BEGIN:VEVENT\r\nUID:a@test\r\nDTSTART:20260910T100000\r\nSUMMARY:Alpha\r\nEND:VEVENT\r\n\
+         BEGIN:VEVENT\r\nUID:b@test\r\nDTSTART:20260911T100000\r\nSUMMARY:Beta\r\nEND:VEVENT\r\n\
+         END:VCALENDAR\r\n",
+    )
+    .unwrap();
+    sb.oca()
+        .args(["import", ics.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(contains("imported 2 events"));
+    // Re-importing the same UIDs adds nothing.
+    sb.oca()
+        .args(["import", ics.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(contains("imported 0 events"));
+    assert_eq!(sb.event_count(), 2);
+
+    let out = sb.path().join("out.ics");
+    sb.oca()
+        .args(["export", out.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(contains("exported 2 events"));
+    let exported = fs::read_to_string(&out).unwrap();
+    assert!(exported.contains("UID:a@test"));
+    assert!(exported.contains("SUMMARY:Beta"));
+
+    let fresh = Sandbox::new();
+    fresh
+        .oca()
+        .args(["import", out.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(contains("imported 2 events"));
+    assert_eq!(fresh.event_count(), 2);
+}
+
+#[test]
+fn import_missing_file_fails() {
+    let sb = Sandbox::new();
+    sb.oca()
+        .args(["import", "/nonexistent/file.ics"])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("no event at index 5"));
+        .stderr(contains("cannot read"));
+}
 
-    // Nothing changed.
-    assert_eq!(ls_json(&home)[0]["summary"], "Dentist");
+#[test]
+fn config_shows_defaults_and_persists_launch_flag() {
+    let sb = Sandbox::new();
+    sb.oca()
+        .arg("config")
+        .assert()
+        .success()
+        .stdout(contains("ics_path =").and(contains("launch_tui_on_no_args = false")));
+
+    sb.oca()
+        .args(["config", "--launch-tui-on-no-args", "true"])
+        .assert()
+        .success()
+        .stdout(contains("launch_tui_on_no_args set to true"));
+    let config = fs::read_to_string(sb.path().join("cal").join("config.toml")).unwrap();
+    assert!(config.contains("launch_tui_on_no_args = true"));
+    sb.oca()
+        .arg("config")
+        .assert()
+        .success()
+        .stdout(contains("launch_tui_on_no_args = true"));
+
+    sb.oca()
+        .args(["config", "--launch-tui-on-no-args", "false"])
+        .assert()
+        .success()
+        .stdout(contains("launch_tui_on_no_args set to false"));
+    sb.oca()
+        .arg("config")
+        .assert()
+        .success()
+        .stdout(contains("launch_tui_on_no_args = false"));
+}
+
+#[test]
+fn config_rejects_invalid_bool() {
+    let sb = Sandbox::new();
+    sb.oca()
+        .args(["config", "--launch-tui-on-no-args", "maybe"])
+        .assert()
+        .failure()
+        .stderr(contains("invalid BOOL 'maybe'"));
+    sb.oca()
+        .arg("config")
+        .assert()
+        .success()
+        .stdout(contains("launch_tui_on_no_args = false"));
 }

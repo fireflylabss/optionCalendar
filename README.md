@@ -83,7 +83,7 @@ Bare `oca` prints help. Opt in to TUI-on-bare via
 ```bash
 export CARGO_TARGET_DIR="$(pwd)/target"
 cargo fmt --check
-cargo test -p optioncalendar-core
-cargo test -p optioncalendar-cli --test cli
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
 cargo build -p optioncalendar-cli
 ```

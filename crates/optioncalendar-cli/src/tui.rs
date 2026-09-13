@@ -616,7 +616,7 @@ fn agenda_for_day(
             .cloned()
             .map(DayItem::Task),
     );
-    items.sort_by(|a, b| day_sort_key(a).cmp(&day_sort_key(b)));
+    items.sort_by_key(day_sort_key);
     items
 }
 
@@ -764,7 +764,7 @@ mod tests {
 
     #[test]
     fn month_weeks_cover_september_monday_first() {
-        let weeks = month_weeks(2026, 9);
+        let weeks = month_weeks(2026, 9, WeekStart::Monday);
         // Sep 1 2026 is a Tuesday: first week starts Mon Aug 31.
         assert_eq!(weeks[0][0], NaiveDate::from_ymd_opt(2026, 8, 31).unwrap());
         assert!(weeks.iter().all(|w| w.len() == 7));
