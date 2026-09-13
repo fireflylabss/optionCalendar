@@ -45,7 +45,7 @@ impl Event {
         let summary = summary.into();
         let uid = format!(
             "{:x}@optioncalendar",
-            blake_like(&summary, &start, end.as_ref())
+            generate_uid(&summary, &start, end.as_ref())
         );
         let all_day = is_midnight(&start) && end.is_none_or(|e| is_midnight(&e));
         let end = if all_day {
@@ -85,8 +85,9 @@ fn is_midnight(value: &NaiveDateTime) -> bool {
     value.time() == NaiveTime::MIN
 }
 
-/// Tiny deterministic hash for generated UIDs (no extra dependency).
-fn blake_like(summary: &str, start: &NaiveDateTime, end: Option<&NaiveDateTime>) -> u64 {
+/// FNV-1a hash of summary/start/end mixed with wall-clock nanos for generated
+/// UIDs (no extra dependency).
+fn generate_uid(summary: &str, start: &NaiveDateTime, end: Option<&NaiveDateTime>) -> u64 {
     let mut hash: u64 = 0xcbf29ce484222325;
     let text = format!(
         "{summary}|{start}|{}",

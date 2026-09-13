@@ -1,7 +1,7 @@
 //! File store: one ICS file on disk plus `~/.option/cal/config.toml` settings.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use option_sdk::App;
 use serde::{Deserialize, Serialize};
@@ -43,28 +43,38 @@ pub fn default_ics_path() -> PathBuf {
 pub fn load_settings() -> Result<Settings> {
     let app = App::CAL;
     app.ensure().map_err(Error::Io)?;
-    let path = app.config_toml();
-    if !path.exists() {
-        let settings = Settings::default();
-        save_settings(&settings)?;
-        return Ok(settings);
-    }
-    let raw = fs::read_to_string(&path)?;
-    let settings: Settings =
-        toml::from_str(&raw).map_err(|e| Error::Config(format!("{}: {e}", path.display())))?;
-    Ok(settings)
+    load_settings_from(&app.config_toml())
 }
 
 /// Persist settings to [`App::CAL`] config.toml.
 pub fn save_settings(settings: &Settings) -> Result<()> {
     let app = App::CAL;
     app.ensure().map_err(Error::Io)?;
-    let path = app.config_toml();
-    if let Some(parent) = path.parent() {
+    save_settings_to(&app.config_toml(), settings)
+}
+
+/// Load settings from `path`, writing defaults there when the file is missing.
+pub fn load_settings_from(path: &Path) -> Result<Settings> {
+    if !path.exists() {
+        let settings = Settings::default();
+        save_settings_to(path, &settings)?;
+        return Ok(settings);
+    }
+    let raw = fs::read_to_string(path)?;
+    let settings: Settings =
+        toml::from_str(&raw).map_err(|e| Error::Config(format!("{}: {e}", path.display())))?;
+    Ok(settings)
+}
+
+/// Persist settings to `path` (parents created as needed).
+pub fn save_settings_to(path: &Path, settings: &Settings) -> Result<()> {
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
         fs::create_dir_all(parent)?;
     }
     let raw = toml::to_string_pretty(settings).map_err(|e| Error::Config(e.to_string()))?;
-    option_sdk::atomic_write(&path, raw.as_bytes()).map_err(Error::Io)?;
+    option_sdk::atomic_write(path, raw.as_bytes()).map_err(Error::Io)?;
     Ok(())
 }
 
@@ -240,30 +250,31 @@ mod tests {
     #[test]
     fn launch_flag_defaults_false_for_old_configs() {
         let dir = tempfile::tempdir().unwrap();
-        let root = dir.path().join("option-home");
-        // SAFETY: no other test in this crate touches OPTION_HOME.
-        unsafe {
-            std::env::set_var("OPTION_HOME", &root);
-        }
-        let settings = load_settings().unwrap();
+        let path = dir.path().join("cal").join("config.toml");
+        let settings = load_settings_from(&path).unwrap();
         assert!(!settings.launch_tui_on_no_args);
+        assert!(path.exists());
 
         // Persisting `true` round-trips through config.toml.
         let mut updated = settings.clone();
         updated.launch_tui_on_no_args = true;
-        save_settings(&updated).unwrap();
-        assert!(load_settings().unwrap().launch_tui_on_no_args);
+        save_settings_to(&path, &updated).unwrap();
+        assert!(load_settings_from(&path).unwrap().launch_tui_on_no_args);
 
         // A hand-written old config (no flag field) still loads as false.
         std::fs::write(
-            App::CAL.config_toml(),
+            &path,
             format!("ics_path = \"{}\"\n", settings.ics_path.display()),
         )
         .unwrap();
-        assert!(!load_settings().unwrap().launch_tui_on_no_args);
+        assert!(!load_settings_from(&path).unwrap().launch_tui_on_no_args);
+    }
 
-        unsafe {
-            std::env::remove_var("OPTION_HOME");
-        }
+    #[test]
+    fn load_settings_from_rejects_invalid_toml() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "ics_path = 42\n").unwrap();
+        assert!(matches!(load_settings_from(&path), Err(Error::Config(_))));
     }
 }

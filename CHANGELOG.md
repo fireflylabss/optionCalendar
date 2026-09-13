@@ -31,6 +31,10 @@ We only call something **stable** when we mean it.
 
 ## Unreleased
 
+- CLI integration tests (`crates/optioncalendar-cli/tests/cli.rs`, `assert_cmd` + `predicates`) covering help, add/ls, today/week/month/next/search, rm by index and UID, import/export roundtrip and `config --launch-tui-on-no-args`.
+- `load_settings_from(path)` / `save_settings_to(path, &Settings)` in core; `load_settings`/`save_settings` are thin wrappers. The settings unit test no longer mutates `OPTION_HOME`.
+- Renamed internal `blake_like` to `generate_uid` (it is FNV-1a + wall-clock nanos).
+- Fixed `cargo test --workspace` (stale `month_weeks` test call) and clippy `-D warnings` lints on recent toolchains.
 - ICS fidelity: unknown VEVENT properties, nested components (VALARM…) and DTSTART/DTEND parameters (e.g. `TZID`) are preserved across `import`/`add`/`export` instead of being dropped.
 - All-day events: `DTEND;VALUE=DATE` is treated as exclusive (a one-day event no longer shows on two days); `oca add … --at YYYY-MM-DD` creates an all-day event serialized as `VALUE=DATE`.
 - Recurring events: simple `RRULE` (`FREQ=DAILY|WEEKLY|MONTHLY|YEARLY`, `INTERVAL`, `COUNT`, `UNTIL`) are expanded in `today`/`week`/`month`/`tui`.
