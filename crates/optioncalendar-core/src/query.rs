@@ -31,7 +31,7 @@ pub fn occurs_on(event: &Event, date: NaiveDate) -> bool {
 }
 
 /// Events touching `date`, sorted by start time.
-pub fn events_on<'a>(events: &'a [Event], date: NaiveDate) -> Vec<&'a Event> {
+pub fn events_on(events: &[Event], date: NaiveDate) -> Vec<&Event> {
     let mut hits: Vec<&Event> = events.iter().filter(|e| occurs_on(e, date)).collect();
     hits.sort_by(|a, b| {
         a.start
@@ -42,7 +42,7 @@ pub fn events_on<'a>(events: &'a [Event], date: NaiveDate) -> Vec<&'a Event> {
 }
 
 /// Events touching any day in `[start, end]`, sorted by start time.
-pub fn events_between<'a>(events: &'a [Event], start: NaiveDate, end: NaiveDate) -> Vec<&'a Event> {
+pub fn events_between(events: &[Event], start: NaiveDate, end: NaiveDate) -> Vec<&Event> {
     let mut hits: Vec<&Event> = events
         .iter()
         .filter(|e| e.start.date() <= end && e.end_or_start().date() >= start)
@@ -89,7 +89,7 @@ pub fn today_merged(events: &[Event], tasks: &[TaskDue], date: NaiveDate) -> Vec
             .cloned()
             .map(DayItem::Task),
     );
-    items.sort_by(|a, b| a.sort_key().cmp(&b.sort_key()));
+    items.sort_by_key(|a| a.sort_key());
     items
 }
 

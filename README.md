@@ -71,6 +71,18 @@ Bare `oca` prints help. Opt in to TUI-on-bare via
 ```bash
 export CARGO_TARGET_DIR="$(pwd)/target"
 cargo fmt --check
-cargo test -p optioncalendar-core
+cargo clippy --workspace -- -D warnings
+cargo test --workspace
 cargo build -p optioncalendar-cli
 ```
+
+## CI / Releases
+
+- `ci.yml` runs fmt, clippy (`-D warnings`), tests and a release build on every
+  push to `main` and every PR. `optionSDK` is cloned into `../optionSDK` at the
+  ref set by `OPTIONSDK_REF` in the workflow.
+- `release.yml` runs on `v*` tags: publishes a GitHub Release with a Linux
+  x86_64 tarball (`optioncalendar` + `oca`) and runs `packaging/aur/bump.sh`.
+  Pushing to the AUR requires the `AUR_SSH_KEY` repository secret (private SSH
+  key registered on aur.archlinux.org); without it that step is skipped and
+  `packaging/aur/publish.sh` can be run locally.

@@ -29,6 +29,12 @@ We only call something **stable** when we mean it.
 
 </details>
 
+## Unreleased
+
+- CI workflow (`.github/workflows/ci.yml`): fmt, clippy `-D warnings`, tests and release build on pushes to `main` and PRs; `optionSDK` cloned at `OPTIONSDK_REF`.
+- Release workflow (`.github/workflows/release.yml`): on `v*` tags builds the Linux x86_64 tarball, publishes a GitHub Release, runs `packaging/aur/bump.sh`, and pushes to the AUR when the `AUR_SSH_KEY` secret exists.
+- Fixed pre-existing clippy warnings (`needless_lifetimes`, `unnecessary_sort_by`) and a stale `month_weeks` test call in the CLI so `cargo clippy -D warnings` / `cargo test --workspace` pass.
+
 ## v0.1.0-stable · 08/09/2026
 
 First stable cut: ICS calendar CLI with day/week/month views, tasks bridge, and a read-only TUI. This version was made for CLI with a stable release channel on 08/09/2026 (v0.1.0-stable).

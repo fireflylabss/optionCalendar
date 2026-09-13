@@ -1,0 +1,59 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  # optionSDK is a path dependency (../optionSDK). Which ref to check out:
+  #   - "master"      → branch head
+  #   - "pull/N/head" → an open PR on optionSDK
+  #   - "v0.1.4"      → a tag (switch to this once App::CAL ships in a tagged optionSDK
+  #                     release; also bump _optionsdk_ver in packaging/aur/PKGBUILD)
+  # App::CAL currently only exists in fireflylabss/optionSDK PR #1, so we use it until merged.
+  OPTIONSDK_REF: pull/1/head
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: optionCalendar
+
+      - name: Clone optionSDK
+        run: |
+          git clone --no-checkout https://github.com/fireflylabss/optionSDK.git optionSDK
+          cd optionSDK
+          git fetch --depth=1 origin "$OPTIONSDK_REF"
+          git checkout --detach FETCH_HEAD
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: optionCalendar
+
+      - name: Set CARGO_TARGET_DIR
+        working-directory: optionCalendar
+        run: echo "CARGO_TARGET_DIR=$(pwd)/target" >> "$GITHUB_ENV"
+
+      - name: Format
+        working-directory: optionCalendar
+        run: cargo fmt --check
+
+      - name: Clippy
+        working-directory: optionCalendar
+        run: cargo clippy --workspace -- -D warnings
+
+      - name: Test
+        working-directory: optionCalendar
+        run: cargo test --workspace
+
+      - name: Release build
+        working-directory: optionCalendar
+        run: cargo build --release -p optioncalendar-cli
