@@ -4,17 +4,39 @@
 //! VEVENT are ignored so files from other calendars keep loading.
 
 use chrono::NaiveDateTime;
+use serde::Serialize;
 
 use crate::{Error, Result};
 
 /// One calendar event.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Serializes with ISO 8601 `YYYY-MM-DDTHH:MM:SS` datetimes (`end` is `null` when unset).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Event {
     pub uid: String,
     pub summary: String,
     pub description: String,
+    #[serde(serialize_with = "serialize_iso")]
     pub start: NaiveDateTime,
+    #[serde(serialize_with = "serialize_iso_opt")]
     pub end: Option<NaiveDateTime>,
+}
+
+fn serialize_iso<S: serde::Serializer>(
+    value: &NaiveDateTime,
+    s: S,
+) -> std::result::Result<S::Ok, S::Error> {
+    s.serialize_str(&value.format("%Y-%m-%dT%H:%M:%S").to_string())
+}
+
+fn serialize_iso_opt<S: serde::Serializer>(
+    value: &Option<NaiveDateTime>,
+    s: S,
+) -> std::result::Result<S::Ok, S::Error> {
+    match value {
+        Some(value) => serialize_iso(value, s),
+        None => s.serialize_none(),
+    }
 }
 
 impl Event {

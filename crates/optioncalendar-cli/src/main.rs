@@ -12,9 +12,10 @@ use clap::{
 };
 use option_sdk::App;
 use optioncalendar_core::{
-    CalStore, DayItem, Event, due_tasks_or_empty, events_between, load_settings, month_range,
-    parse_dt, to_ics, today, today_merged,
+    CalStore, DayItem, Event, TaskDue, due_tasks_or_empty, events_between, load_settings,
+    month_range, parse_dt, to_ics, today, today_merged,
 };
+use serde::Serialize;
 
 fn cli_styles() -> Styles {
     if !option_sdk::color_enabled() {
@@ -51,6 +52,9 @@ fn cli_styles() -> Styles {
     disable_help_subcommand = true,
 )]
 struct Cli {
+    /// Print machine-readable JSON (ls, today, week, month, next, search)
+    #[arg(long, global = true)]
+    json: bool,
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -90,6 +94,29 @@ enum Commands {
         /// Text to search for (case-insensitive)
         query: String,
     },
+    /// Edit an event by UID or 1-based list index (the UID never changes)
+    Edit {
+        /// UID or 1-based index from `oca ls`
+        id: String,
+        /// New summary
+        #[arg(long, value_name = "SUMMARY")]
+        summary: Option<String>,
+        /// New start: YYYY-MM-DD or YYYY-MM-DDTHH:MM
+        #[arg(long, value_name = "AT")]
+        at: Option<String>,
+        /// New end: YYYY-MM-DD or YYYY-MM-DDTHH:MM
+        #[arg(long, value_name = "END", conflicts_with = "clear_end")]
+        end: Option<String>,
+        /// New description / notes
+        #[arg(long, value_name = "DESC", conflicts_with = "clear_description")]
+        description: Option<String>,
+        /// Remove the end time
+        #[arg(long)]
+        clear_end: bool,
+        /// Remove the description
+        #[arg(long)]
+        clear_description: bool,
+    },
     /// Remove an event by UID or 1-based list index (see `oca ls --uid`)
     Rm {
         /// UID or 1-based index from `oca ls`
@@ -127,6 +154,7 @@ fn main() {
 
 fn run() -> Result<()> {
     let cli = Cli::parse();
+    let json = cli.json;
     App::CAL
         .ensure()
         .context("failed to ensure ~/.option/cal")?;
@@ -148,12 +176,31 @@ fn run() -> Result<()> {
             end,
             description,
         } => cmd_add(&summary, &at, end.as_deref(), description.as_deref())?,
-        Commands::Ls { uid } => cmd_ls(uid)?,
-        Commands::Today => cmd_today()?,
-        Commands::Week => cmd_week()?,
-        Commands::Month => cmd_month()?,
-        Commands::Next => cmd_next()?,
-        Commands::Search { query } => cmd_search(&query)?,
+        Commands::Ls { uid } => cmd_ls(uid, json)?,
+        Commands::Today => cmd_today(json)?,
+        Commands::Week => cmd_week(json)?,
+        Commands::Month => cmd_month(json)?,
+        Commands::Next => cmd_next(json)?,
+        Commands::Search { query } => cmd_search(&query, json)?,
+        Commands::Edit {
+            id,
+            summary,
+            at,
+            end,
+            description,
+            clear_end,
+            clear_description,
+        } => cmd_edit(
+            &id,
+            EditArgs {
+                summary: summary.as_deref(),
+                at: at.as_deref(),
+                end: end.as_deref(),
+                description: description.as_deref(),
+                clear_end,
+                clear_description,
+            },
+        )?,
         Commands::Rm { id } => cmd_rm(&id)?,
         Commands::Import { file } => cmd_import(&file)?,
         Commands::Export { file } => cmd_export(&file)?,
@@ -206,8 +253,27 @@ fn cmd_add(summary: &str, at: &str, end: Option<&str>, description: Option<&str>
     Ok(())
 }
 
-fn cmd_ls(show_uid: bool) -> Result<()> {
+/// JSON line of `today`: an event or a due task, tagged by `kind`.
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+enum DayItemJson<'a> {
+    Event(&'a Event),
+    Task(&'a TaskDue),
+}
+
+fn print_json<T: Serialize>(value: &T) -> Result<()> {
+    println!(
+        "{}",
+        serde_json::to_string_pretty(value).context("failed to serialize JSON")?
+    );
+    Ok(())
+}
+
+fn cmd_ls(show_uid: bool, json: bool) -> Result<()> {
     let store = open_store()?;
+    if json {
+        return print_json(&store.events);
+    }
     print_events(
         &store.events.iter().collect::<Vec<_>>(),
         "no events",
@@ -216,12 +282,22 @@ fn cmd_ls(show_uid: bool) -> Result<()> {
     Ok(())
 }
 
-fn cmd_today() -> Result<()> {
+fn cmd_today(json: bool) -> Result<()> {
     let store = open_store()?;
     let date = today();
     // The tasks bridge never fails: missing vault means "no tasks".
     let tasks = due_tasks_or_empty();
     let items = today_merged(&store.events, &tasks, date);
+    if json {
+        let items: Vec<DayItemJson> = items
+            .iter()
+            .map(|item| match item {
+                DayItem::Event(event) => DayItemJson::Event(event),
+                DayItem::Task(task) => DayItemJson::Task(task),
+            })
+            .collect();
+        return print_json(&items);
+    }
     let mark = App::CAL.mark();
     if items.is_empty() {
         println!("{mark} nothing today ({})", date.format("%Y-%m-%d"));
@@ -242,11 +318,14 @@ fn cmd_today() -> Result<()> {
     Ok(())
 }
 
-fn cmd_week() -> Result<()> {
+fn cmd_week(json: bool) -> Result<()> {
     let store = open_store()?;
     let start = today();
     let end = start + chrono::Duration::days(6);
     let hits = events_between(&store.events, start, end);
+    if json {
+        return print_json(&hits);
+    }
     println!(
         "{} week · {} → {}",
         App::CAL.mark(),
@@ -257,10 +336,13 @@ fn cmd_week() -> Result<()> {
     Ok(())
 }
 
-fn cmd_month() -> Result<()> {
+fn cmd_month(json: bool) -> Result<()> {
     let store = open_store()?;
     let (first, last) = month_range(today());
     let hits = events_between(&store.events, first, last);
+    if json {
+        return print_json(&hits);
+    }
     println!(
         "{} {} · {} event{}",
         App::CAL.mark(),
@@ -301,23 +383,22 @@ fn cmd_export(file: &PathBuf) -> Result<()> {
 }
 
 /// Show the next event strictly after now.
-fn cmd_next() -> Result<()> {
+fn cmd_next(json: bool) -> Result<()> {
     let store = open_store()?;
     let now = Local::now().naive_local();
-    let upcoming: Vec<&Event> = store
+    let event = store
         .events
         .iter()
         .filter(|event| event.start > now)
-        .collect();
-    if upcoming.is_empty() {
+        .min_by_key(|event| event.start);
+    if json {
+        // Always an array: empty or a single upcoming event.
+        return print_json(&event.into_iter().collect::<Vec<_>>());
+    }
+    let Some(event) = event else {
         println!("{} no upcoming events", App::CAL.mark());
         return Ok(());
-    }
-    let event = upcoming
-        .iter()
-        .min_by_key(|event| event.start)
-        .copied()
-        .expect("upcoming is non-empty");
+    };
     let days = (event.start.date() - now.date()).num_days();
     let when = match days {
         0 => "today".to_string(),
@@ -335,7 +416,7 @@ fn cmd_next() -> Result<()> {
 }
 
 /// Case-insensitive search over summary and description.
-fn cmd_search(query: &str) -> Result<()> {
+fn cmd_search(query: &str, json: bool) -> Result<()> {
     let needle = query.trim().to_ascii_lowercase();
     if needle.is_empty() {
         bail!("search query cannot be empty");
@@ -349,14 +430,107 @@ fn cmd_search(query: &str) -> Result<()> {
                 || event.description.to_ascii_lowercase().contains(&needle)
         })
         .collect();
+    if json {
+        return print_json(&hits);
+    }
     print_events(&hits, "no matches", false);
+    Ok(())
+}
+
+struct EditArgs<'a> {
+    summary: Option<&'a str>,
+    at: Option<&'a str>,
+    end: Option<&'a str>,
+    description: Option<&'a str>,
+    clear_end: bool,
+    clear_description: bool,
+}
+
+impl EditArgs<'_> {
+    fn is_empty(&self) -> bool {
+        self.summary.is_none()
+            && self.at.is_none()
+            && self.end.is_none()
+            && self.description.is_none()
+            && !self.clear_end
+            && !self.clear_description
+    }
+}
+
+/// Edit an event by UID or 1-based list index; the UID is preserved.
+fn cmd_edit(id: &str, args: EditArgs<'_>) -> Result<()> {
+    if args.is_empty() {
+        bail!(
+            "nothing to change: pass at least one of --summary/--at/--end/--description/--clear-end/--clear-description"
+        );
+    }
+    if let Some(summary) = args.summary
+        && summary.trim().is_empty()
+    {
+        bail!("summary cannot be empty");
+    }
+    let start = args.at.map(parse_cli_dt).transpose()?;
+    let end = args.end.map(parse_cli_dt).transpose()?;
+
+    let mut store = open_store()?;
+    let uid = resolve_id(&store, id)?;
+    let current = store
+        .events
+        .iter()
+        .find(|event| event.uid == uid)
+        .with_context(|| format!("no event with id '{id}'"))?;
+    let new_start = start.unwrap_or(current.start);
+    let new_end = if args.clear_end {
+        None
+    } else {
+        end.or(current.end)
+    };
+    if let Some(new_end) = new_end
+        && new_end < new_start
+    {
+        bail!(
+            "end ({}) is before start ({})",
+            fmt_dt(&new_end),
+            fmt_dt(&new_start)
+        );
+    }
+
+    let updated = store
+        .update(&uid, |event| {
+            if let Some(summary) = args.summary {
+                event.summary = summary.trim().to_string();
+            }
+            event.start = new_start;
+            event.end = new_end;
+            if args.clear_description {
+                event.description.clear();
+            } else if let Some(description) = args.description {
+                event.description = description.trim().to_string();
+            }
+        })
+        .context("failed to save event")?;
+    if !updated {
+        bail!("no event with id '{id}'");
+    }
+    let event = store
+        .events
+        .iter()
+        .find(|event| event.uid == uid)
+        .expect("updated event is in the store");
+    println!(
+        "{} edited {}  {}  [{}]",
+        App::CAL.mark(),
+        fmt_dt(&event.start),
+        event.summary,
+        event.uid
+    );
     Ok(())
 }
 
 /// Remove an event by UID or 1-based list index.
 fn cmd_rm(id: &str) -> Result<()> {
     let mut store = open_store()?;
-    let uid = resolve_rm_id(&store, id)?;
+    let uid = resolve_id(&store, id)?;
     let removed = store.remove(&uid).context("failed to remove event")?;
     if removed {
         println!("{} removed [{}]", App::CAL.mark(), uid);
@@ -366,8 +540,8 @@ fn cmd_rm(id: &str) -> Result<()> {
     Ok(())
 }
 
-/// Resolve a `rm` id: a 1-based index into the sorted store, or a raw UID.
-fn resolve_rm_id(store: &CalStore, id: &str) -> Result<String> {
+/// Resolve an event id: a 1-based index into the sorted store, or a raw UID.
+fn resolve_id(store: &CalStore, id: &str) -> Result<String> {
     if let Ok(index) = id.parse::<usize>() {
         if index == 0 {
             bail!("list index is 1-based, not 0");

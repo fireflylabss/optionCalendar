@@ -33,6 +33,10 @@ We only call something **stable** when we mean it.
 
 - CI workflow (`.github/workflows/ci.yml`): fmt, clippy `-D warnings`, tests and release build on pushes to `main` and PRs; `optionSDK` cloned at `OPTIONSDK_REF`.
 - Release workflow (`.github/workflows/release.yml`): on `v*` tags builds the Linux x86_64 tarball, publishes a GitHub Release, runs `packaging/aur/bump.sh`, and pushes to the AUR when the `AUR_SSH_KEY` secret exists.
+- `edit <id> [--summary S] [--at START] [--end END] [--description D] [--clear-end] [--clear-description]` edits an event by UID or 1-based index; the UID never changes, `end >= start` is validated, and no flags is an error.
+- Global `--json` flag for `ls`, `today`, `week`, `month`, `next`, `search`: stable JSON array of `{uid, summary, description, start, end}` (ISO 8601); `today` items carry `kind: "event" | "task"`.
+- `CalStore::update(uid, f)` in core; `Event` and `TaskDue` implement `Serialize`.
+- CLI integration tests (`tests/edit_json.rs`) for `edit` and `--json`.
 - CLI integration tests (`crates/optioncalendar-cli/tests/cli.rs`, `assert_cmd` + `predicates`) covering help, add/ls, today/week/month/next/search, rm by index and UID, import/export roundtrip and `config --launch-tui-on-no-args`.
 - `load_settings_from(path)` / `save_settings_to(path, &Settings)` in core; `load_settings`/`save_settings` are thin wrappers. The settings unit test no longer mutates `OPTION_HOME`.
 - Renamed internal `blake_like` to `generate_uid` (it is FNV-1a + wall-clock nanos).
