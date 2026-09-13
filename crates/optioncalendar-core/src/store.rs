@@ -131,6 +131,20 @@ impl CalStore {
         Ok(true)
     }
 
+    /// Apply `f` to the event with `uid`, re-sort and persist.
+    /// Returns `false` (without saving) when no event has that UID.
+    /// The UID itself is left untouched even if `f` changes it.
+    pub fn update(&mut self, uid: &str, f: impl FnOnce(&mut Event)) -> Result<bool> {
+        let Some(event) = self.events.iter_mut().find(|event| event.uid == uid) else {
+            return Ok(false);
+        };
+        f(event);
+        event.uid = uid.to_owned();
+        self.sort();
+        self.save()?;
+        Ok(true)
+    }
+
     /// Merge ICS text, skipping events whose UID already exists.
     /// Returns the number of newly added events.
     pub fn import(&mut self, text: &str) -> Result<usize> {
@@ -244,6 +258,58 @@ mod tests {
         assert!(store.remove(&uid).unwrap());
         assert!(store.events.is_empty());
         assert!(CalStore::open(path).unwrap().events.is_empty());
+    }
+
+    #[test]
+    fn update_edits_resorts_persists_and_keeps_uid() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cal.ics");
+        let mut store = CalStore::open(path.clone()).unwrap();
+        let first = Event::new("First", parse_dt_for_test("2026-09-04T10:00"), None);
+        let second = Event::new("Second", parse_dt_for_test("2026-09-05T10:00"), None);
+        let uid = first.uid.clone();
+        store.add(first).unwrap();
+        store.add(second).unwrap();
+
+        assert!(!store.update("missing-uid", |_| {}).unwrap());
+        let moved = parse_dt_for_test("2026-09-06T09:00");
+        assert!(
+            store
+                .update(&uid, |event| {
+                    event.summary = "Renamed".into();
+                    event.start = moved;
+                    event.uid = "tampered".into();
+                })
+                .unwrap()
+        );
+
+        let reloaded = CalStore::open(path).unwrap();
+        assert_eq!(reloaded.events.len(), 2);
+        assert_eq!(reloaded.events[0].summary, "Second");
+        assert_eq!(reloaded.events[1].summary, "Renamed");
+        assert_eq!(reloaded.events[1].start, moved);
+        assert_eq!(reloaded.events[1].uid, uid);
+    }
+
+    #[test]
+    fn event_serializes_iso_dates() {
+        let event = Event {
+            uid: "u1".into(),
+            summary: "S".into(),
+            description: String::new(),
+            start: parse_dt_for_test("2026-09-04T10:00"),
+            end: None,
+            all_day: false,
+            rrule: None,
+            extra: vec![("LOCATION".into(), "HQ".into())],
+            start_raw: None,
+            end_raw: None,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert_eq!(
+            json,
+            r#"{"uid":"u1","summary":"S","description":"","start":"2026-09-04T10:00:00","end":null,"all_day":false,"rrule":null}"#
+        );
     }
 
     /// Old configs without the opt-in flag load with it defaulting to false.

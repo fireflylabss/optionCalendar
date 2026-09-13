@@ -6,18 +6,23 @@
 //! so files from other calendars survive a load/save cycle.
 
 use chrono::{Duration, NaiveDate, NaiveDateTime, NaiveTime};
+use serde::Serialize;
 
 use crate::{Error, Result};
 
 /// One calendar event.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Serializes with ISO 8601 `YYYY-MM-DDTHH:MM:SS` datetimes (`end` is `null` when unset).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Event {
     pub uid: String,
     pub summary: String,
     pub description: String,
+    #[serde(serialize_with = "serialize_iso")]
     pub start: NaiveDateTime,
     /// End of the event. For `all_day` events this follows ICS semantics and is
     /// **exclusive** (the day after the last day); see [`Event::end_or_start`].
+    #[serde(serialize_with = "serialize_iso_opt")]
     pub end: Option<NaiveDateTime>,
     /// Date-only event (`DTSTART;VALUE=DATE`).
     pub all_day: bool,
@@ -25,12 +30,32 @@ pub struct Event {
     pub rrule: Option<String>,
     /// Uninterpreted VEVENT lines as `(name-with-params, value)`, in file order.
     /// Nested components are kept line by line (`("BEGIN", "VALARM")` … `("END", "VALARM")`).
+    #[serde(skip)]
     pub extra: Vec<(String, String)>,
     /// Original `DTSTART` line as `(name-with-params, raw value)`, re-emitted
     /// verbatim while it still matches `start`.
+    #[serde(skip)]
     pub start_raw: Option<(String, String)>,
     /// Original `DTEND` line, same rules as `start_raw`.
+    #[serde(skip)]
     pub end_raw: Option<(String, String)>,
+}
+
+fn serialize_iso<S: serde::Serializer>(
+    value: &NaiveDateTime,
+    s: S,
+) -> std::result::Result<S::Ok, S::Error> {
+    s.serialize_str(&value.format("%Y-%m-%dT%H:%M:%S").to_string())
+}
+
+fn serialize_iso_opt<S: serde::Serializer>(
+    value: &Option<NaiveDateTime>,
+    s: S,
+) -> std::result::Result<S::Ok, S::Error> {
+    match value {
+        Some(value) => serialize_iso(value, s),
+        None => s.serialize_none(),
+    }
 }
 
 impl Event {

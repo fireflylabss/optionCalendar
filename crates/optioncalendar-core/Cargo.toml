@@ -19,3 +19,6 @@ thiserror = { workspace = true }
 dirs = { workspace = true }
 tempfile = { workspace = true }
 chrono = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

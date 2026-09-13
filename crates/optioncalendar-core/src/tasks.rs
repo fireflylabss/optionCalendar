@@ -7,13 +7,21 @@
 use std::path::PathBuf;
 
 use chrono::NaiveDate;
+use serde::Serialize;
 
 /// A task with a due date, sourced from a Markdown checklist.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Serializes `due` as ISO 8601 `YYYY-MM-DD`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct TaskDue {
     pub text: String,
+    #[serde(serialize_with = "serialize_date")]
     pub due: NaiveDate,
     pub source: PathBuf,
+}
+
+fn serialize_date<S: serde::Serializer>(value: &NaiveDate, s: S) -> Result<S::Ok, S::Error> {
+    s.serialize_str(&value.format("%Y-%m-%d").to_string())
 }
 
 /// Default tasks directory: `~/Documents/Notes/tasks`.
