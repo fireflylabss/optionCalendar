@@ -29,9 +29,9 @@ We only call something **stable** when we mean it.
 
 </details>
 
-## v0.2.0-stable · 14/09/2026
+## v0.1.1-stable · 14/09/2026
 
-CI/release automation, `edit` and `--json`, ICS fidelity (extra props, exclusive all-day, RRULE) and CLI polish. This version was made for CLI with a stable release channel on 14/09/2026 (v0.2.0-stable).
+CI/release automation, `edit` and `--json`, ICS fidelity (extra props, exclusive all-day, RRULE) and CLI polish. This version was made for CLI with a stable release channel on 14/09/2026 (v0.1.1-stable).
 
 - CI workflow (`.github/workflows/ci.yml`): fmt, clippy `-D warnings`, tests and release build on pushes to `main` and PRs; `optionSDK` cloned at `OPTIONSDK_REF`.
 - Release workflow (`.github/workflows/release.yml`): on `v*` tags builds the Linux x86_64 tarball, publishes a GitHub Release, runs `packaging/aur/bump.sh`, and pushes to the AUR when the `AUR_SSH_KEY` secret exists.
