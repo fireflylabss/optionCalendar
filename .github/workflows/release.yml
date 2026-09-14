@@ -9,9 +9,8 @@ permissions:
   contents: write
 
 env:
-  # Keep in sync with ci.yml. Switch to the optionSDK tag that ships App::CAL (v0.1.4)
-  # once it exists, and bump _optionsdk_ver in packaging/aur/PKGBUILD accordingly.
-  OPTIONSDK_REF: master
+  # Keep in sync with ci.yml and with _optionsdk_ver in packaging/aur/PKGBUILD.
+  OPTIONSDK_REF: v0.1.4
   CARGO_TERM_COLOR: always
 
 jobs:

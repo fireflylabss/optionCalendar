@@ -11,8 +11,8 @@ env:
   #   - "pull/N/head" → an open PR on optionSDK
   #   - "v0.1.4"      → a tag (switch to this once App::CAL ships in a tagged optionSDK
   #                     release; also bump _optionsdk_ver in packaging/aur/PKGBUILD)
-  # App::CAL is merged on optionSDK master; switch to v0.1.4 once that tag is published.
-  OPTIONSDK_REF: master
+  # optionSDK v0.1.4 is the first tag with App::CAL.
+  OPTIONSDK_REF: v0.1.4
   CARGO_TERM_COLOR: always
 
 jobs:
