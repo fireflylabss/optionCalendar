@@ -1,7 +1,7 @@
 # Maintainer: Firefly Labs <fireflylabss@users.noreply.github.com>
 
 pkgname=optioncalendar
-pkgver=0.1.0
+pkgver=0.1.1
 pkgrel=1
 pkgdesc='Minimal local calendar CLI — Option family'
 arch=('x86_64')
@@ -21,7 +21,7 @@ source=(
   "optionSDK-$_optionsdk_ver.tar.gz::https://github.com/fireflylabss/optionSDK/archive/refs/tags/v$_optionsdk_ver.tar.gz"
 )
 sha256sums=(
-  '6c29bc5117d4c41b15d50def20c57c299c3a67aea70a0c09192bd93984ae957b'
+  '27107ec74382581ef1229ca4c956245b5a8478805034da893c4a8d6c6436a855'
   'fadd75e0c6ade33018fb741a2f7e395649fff2833f6d08dde5c42459c37012a7'
 )
 

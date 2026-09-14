@@ -1,6 +1,6 @@
 pkgbase = optioncalendar
 	pkgdesc = Minimal local calendar CLI — Option family
-	pkgver = 0.1.0
+	pkgver = 0.1.1
 	pkgrel = 1
 	url = https://github.com/fireflylabss/optionCalendar
 	arch = x86_64
@@ -8,9 +8,9 @@ pkgbase = optioncalendar
 	makedepends = cargo
 	depends = gcc-libs
 	depends = glibc
-	source = optioncalendar-0.1.0.tar.gz::https://github.com/fireflylabss/optionCalendar/archive/refs/tags/v0.1.0.tar.gz
+	source = optioncalendar-0.1.1.tar.gz::https://github.com/fireflylabss/optionCalendar/archive/refs/tags/v0.1.1.tar.gz
 	source = optionSDK-0.1.4.tar.gz::https://github.com/fireflylabss/optionSDK/archive/refs/tags/v0.1.4.tar.gz
-	sha256sums = 6c29bc5117d4c41b15d50def20c57c299c3a67aea70a0c09192bd93984ae957b
+	sha256sums = 27107ec74382581ef1229ca4c956245b5a8478805034da893c4a8d6c6436a855
 	sha256sums = fadd75e0c6ade33018fb741a2f7e395649fff2833f6d08dde5c42459c37012a7
 
 pkgname = optioncalendar
