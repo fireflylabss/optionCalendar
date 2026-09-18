@@ -1,0 +1,8 @@
+[Unit]
+Description=optionCalendar reminders (oca notify --send)
+
+[Service]
+Type=oneshot
+# AUR installs `oca` at /usr/bin/oca; if you installed via cargo, point this
+# at %h/.cargo/bin/oca instead.
+ExecStart=/usr/bin/oca notify --send

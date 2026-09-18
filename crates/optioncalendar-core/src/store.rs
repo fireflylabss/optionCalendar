@@ -22,6 +22,10 @@ pub struct Settings {
     /// First day of the week in the grids (Monday by default, ISO 8601).
     #[serde(default)]
     pub week_start: WeekStart,
+    /// Lookahead window for `oca notify`, in minutes.
+    /// Missing in old configs means the default (15).
+    #[serde(default = "default_notify_window_minutes")]
+    pub notify_window_minutes: u32,
 }
 
 impl Default for Settings {
@@ -30,8 +34,14 @@ impl Default for Settings {
             ics_path: default_ics_path(),
             launch_tui_on_no_args: false,
             week_start: WeekStart::default(),
+            notify_window_minutes: default_notify_window_minutes(),
         }
     }
+}
+
+/// Default reminder lookahead: 15 minutes.
+fn default_notify_window_minutes() -> u32 {
+    15
 }
 
 /// Default calendar file: `~/.option/cal/calendar.ics`.
@@ -334,6 +344,22 @@ mod tests {
         )
         .unwrap();
         assert!(!load_settings_from(&path).unwrap().launch_tui_on_no_args);
+    }
+
+    /// Old configs without `notify_window_minutes` load with the default (15).
+    #[test]
+    fn notify_window_defaults_to_15_for_old_configs() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cal").join("config.toml");
+        let settings = load_settings_from(&path).unwrap();
+        assert_eq!(settings.notify_window_minutes, 15);
+
+        std::fs::write(
+            &path,
+            format!("ics_path = \"{}\"\n", settings.ics_path.display()),
+        )
+        .unwrap();
+        assert_eq!(load_settings_from(&path).unwrap().notify_window_minutes, 15);
     }
 
     #[test]

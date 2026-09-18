@@ -4,6 +4,7 @@
 
 mod error;
 pub mod ics;
+pub mod notify;
 pub mod query;
 pub mod store;
 pub mod tasks;
@@ -11,6 +12,7 @@ pub mod week;
 
 pub use error::{Error, Result};
 pub use ics::{Event, format_date, format_dt, is_date_only, parse_dt, parse_ics, to_ics};
+pub use notify::{DEFAULT_LATE, due_events, load_notified, notification_key, save_notified};
 pub use query::{
     DayItem, events_between, events_on, merged_between, month_range, occurrences_between,
     occurs_on, today, today_merged,

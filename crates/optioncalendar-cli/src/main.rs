@@ -5,15 +5,16 @@ mod tui;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result, bail};
-use chrono::{Local, NaiveDate, NaiveDateTime};
+use chrono::{Duration, Local, NaiveDate, NaiveDateTime};
 use clap::{
     CommandFactory, Parser, Subcommand,
     builder::styling::{AnsiColor, Effects, Styles},
 };
 use option_sdk::App;
 use optioncalendar_core::{
-    CalStore, DayItem, Event, TaskDue, WeekStart, due_tasks_or_empty, is_date_only, load_settings,
-    merged_between, month_range, parse_dt, to_ics, today, today_merged,
+    CalStore, DEFAULT_LATE, DayItem, Event, TaskDue, WeekStart, due_events, due_tasks_or_empty,
+    is_date_only, load_notified, load_settings, merged_between, month_range, notification_key,
+    parse_dt, save_notified, to_ics, today, today_merged,
 };
 use serde::Serialize;
 
@@ -44,6 +45,7 @@ fn cli_styles() -> Styles {
   calendar  ~/.option/cal/calendar.ics\n\
  \n\
   tui       `oca tui` opens the month + agenda view\n\
+  notify    `oca notify --send` fires desktop reminders (run it from a timer)\n\
  \n\
  Bare `oca` prints this help unless `launch_tui_on_no_args`\n\
  is enabled via `oca config` (then bare `oca` opens the TUI).",
@@ -101,6 +103,15 @@ enum Commands {
     },
     /// Show the next upcoming event
     Next,
+    /// Show events starting soon; --send fires desktop notifications
+    Notify {
+        /// Lookahead window in minutes (default: notify_window_minutes, 15)
+        #[arg(long, value_name = "MIN")]
+        window: Option<u32>,
+        /// Run the notifier for each due occurrence and remember what was sent
+        #[arg(long)]
+        send: bool,
+    },
     /// Search events by summary or description
     Search {
         /// Text to search for (case-insensitive)
@@ -146,7 +157,7 @@ enum Commands {
     },
     /// Open the interactive month + agenda view (read-only)
     Tui,
-    /// Show settings, or persist `--launch-tui-on-no-args` / `--week-start`
+    /// Show settings, or persist `--launch-tui-on-no-args` / `--week-start` / `--notify-window-minutes`
     Config {
         /// Launch the TUI when `oca` is invoked with no subcommand
         #[arg(long, value_name = "BOOL")]
@@ -154,6 +165,9 @@ enum Commands {
         /// First day of the week: monday (default) or sunday
         #[arg(long, value_name = "DAY")]
         week_start: Option<String>,
+        /// Reminder lookahead for `oca notify`, in minutes
+        #[arg(long, value_name = "MIN")]
+        notify_window_minutes: Option<String>,
     },
 }
 
@@ -196,6 +210,7 @@ fn run() -> Result<()> {
         Commands::Week { date } => cmd_week(date.as_deref(), json)?,
         Commands::Month { date } => cmd_month(date.as_deref(), json)?,
         Commands::Next => cmd_next(json)?,
+        Commands::Notify { window, send } => cmd_notify(window, send, json)?,
         Commands::Search { query } => cmd_search(&query, json)?,
         Commands::Edit {
             id,
@@ -223,7 +238,12 @@ fn run() -> Result<()> {
         Commands::Config {
             launch_tui_on_no_args,
             week_start,
-        } => cmd_config(launch_tui_on_no_args.as_deref(), week_start.as_deref())?,
+            notify_window_minutes,
+        } => cmd_config(
+            launch_tui_on_no_args.as_deref(),
+            week_start.as_deref(),
+            notify_window_minutes.as_deref(),
+        )?,
     }
     Ok(())
 }
@@ -476,6 +496,75 @@ fn cmd_next(json: bool) -> Result<()> {
     Ok(())
 }
 
+/// List occurrences starting soon; `--send` runs the notifier once per
+/// occurrence and remembers what was sent (dedup state lives in
+/// `~/.option/cal/notified`). No daemon: a systemd user timer or cron entry
+/// is expected to run this periodically. `OCA_NOTIFY_CMD` overrides the
+/// notifier binary (default `notify-send`) — used by tests and by anyone with
+/// a custom notification script.
+fn cmd_notify(window: Option<u32>, send: bool, json: bool) -> Result<()> {
+    let settings = load_settings().context("failed to load settings")?;
+    let minutes = window.unwrap_or(settings.notify_window_minutes);
+    if minutes == 0 {
+        bail!("invalid MIN '0': use a positive number of minutes");
+    }
+    let store = open_store()?;
+    let now = Local::now().naive_local();
+    let due = due_events(
+        &store.events,
+        now,
+        Duration::minutes(i64::from(minutes)),
+        DEFAULT_LATE,
+    );
+    let mark = App::CAL.mark();
+    if !send {
+        if json {
+            return print_json(&due);
+        }
+        if due.is_empty() {
+            println!("{mark} nothing due within {minutes}m");
+            return Ok(());
+        }
+        println!("{mark} {} due within {minutes}m", due.len());
+        for event in &due {
+            println!("  {}  {}", fmt_time(&event.start), event.summary);
+        }
+        return Ok(());
+    }
+    let state_path = App::CAL.path("notified");
+    let mut sent = load_notified(&state_path);
+    let notifier = std::env::var("OCA_NOTIFY_CMD").unwrap_or_else(|_| "notify-send".to_string());
+    let mut fired = 0usize;
+    for event in &due {
+        let key = notification_key(event);
+        if sent.contains(&key) {
+            continue;
+        }
+        let body = if event.description.is_empty() {
+            fmt_dt(&event.start)
+        } else {
+            format!("{}  {}", fmt_dt(&event.start), event.description)
+        };
+        std::process::Command::new(&notifier)
+            .arg(format!("{mark} {}", event.summary))
+            .arg(body)
+            .status()
+            .with_context(|| format!("cannot run '{notifier}'"))?;
+        sent.insert(key);
+        fired += 1;
+    }
+    if fired == 0 {
+        println!("{mark} nothing to send");
+        return Ok(());
+    }
+    save_notified(&state_path, &sent, now).context("failed to save notify state")?;
+    println!(
+        "{mark} sent {fired} reminder{}",
+        if fired == 1 { "" } else { "s" }
+    );
+    Ok(())
+}
+
 /// Case-insensitive (Unicode) search over summary and description.
 fn cmd_search(query: &str, json: bool) -> Result<()> {
     let needle = query.trim().to_lowercase();
@@ -622,7 +711,11 @@ fn resolve_id(store: &CalStore, id: &str) -> Result<String> {
     Ok(id.to_string())
 }
 
-fn cmd_config(launch_tui_on_no_args: Option<&str>, week_start: Option<&str>) -> Result<()> {
+fn cmd_config(
+    launch_tui_on_no_args: Option<&str>,
+    week_start: Option<&str>,
+    notify_window_minutes: Option<&str>,
+) -> Result<()> {
     let mut settings = load_settings().context("failed to load settings")?;
     let mark = App::CAL.mark();
     let mut changed = false;
@@ -632,6 +725,10 @@ fn cmd_config(launch_tui_on_no_args: Option<&str>, week_start: Option<&str>) -> 
     }
     if let Some(raw) = week_start {
         settings.week_start = parse_week_start(raw)?;
+        changed = true;
+    }
+    if let Some(raw) = notify_window_minutes {
+        settings.notify_window_minutes = parse_minutes(raw)?;
         changed = true;
     }
     if changed {
@@ -648,6 +745,12 @@ fn cmd_config(launch_tui_on_no_args: Option<&str>, week_start: Option<&str>) -> 
                 week_start_name(settings.week_start)
             );
         }
+        if notify_window_minutes.is_some() {
+            println!(
+                "{mark} notify_window_minutes set to {}",
+                settings.notify_window_minutes
+            );
+        }
         return Ok(());
     }
     println!("{mark} config {}", App::CAL.config_toml().display());
@@ -657,6 +760,10 @@ fn cmd_config(launch_tui_on_no_args: Option<&str>, week_start: Option<&str>) -> 
         settings.launch_tui_on_no_args
     );
     println!("  week_start = {}", week_start_name(settings.week_start));
+    println!(
+        "  notify_window_minutes = {}",
+        settings.notify_window_minutes
+    );
     Ok(())
 }
 
@@ -673,6 +780,17 @@ fn week_start_name(value: WeekStart) -> &'static str {
         WeekStart::Monday => "monday",
         WeekStart::Sunday => "sunday",
     }
+}
+
+fn parse_minutes(raw: &str) -> Result<u32> {
+    let value: u32 = raw
+        .trim()
+        .parse()
+        .with_context(|| format!("invalid MIN '{raw}': use a positive number of minutes"))?;
+    if value == 0 {
+        bail!("invalid MIN '{raw}': use a positive number of minutes");
+    }
+    Ok(value)
 }
 
 fn parse_bool(raw: &str) -> Result<bool> {
