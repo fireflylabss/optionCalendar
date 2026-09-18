@@ -6,8 +6,8 @@
 - `CARGO_TARGET_DIR` deve apontar para `$(pwd)/target` nos scripts.
 - `optionSDK` é path dep (`../optionSDK`); o PKGBUILD resolve via download separado.
 - Smoke test: `OPTION_HOME=/tmp/oca-smoke ./target/debug/oca add "Test" --at 2026-09-10T10:00 && ./target/debug/oca ls --uid`.
-- Testes: `cargo test --workspace` (sem rede) — 34 unitários no core, 3 no TUI e
-  21 de integração do CLI em `crates/optioncalendar-cli/tests/cli.rs` (+4 em `tests/edit_json.rs` para `edit`/`--json`)
+- Testes: `cargo test --workspace` (sem rede) — 40 unitários no core, 3 no TUI e
+  27 de integração do CLI em `crates/optioncalendar-cli/tests/cli.rs` (+4 em `tests/edit_json.rs` para `edit`/`--json`)
   (`assert_cmd` + `predicates`; cada teste roda `oca` com `OPTION_HOME` num tempdir).
 - Lint: `cargo clippy --workspace --all-targets -- -D warnings`.
 
@@ -25,16 +25,23 @@
     retornam `Vec<Event>` (clones) e expandem RRULE `FREQ=DAILY|WEEKLY|MONTHLY|YEARLY` com
     INTERVAL/COUNT/UNTIL (`occurrences_between`); regra não suportada = só a primeira ocorrência.
   - `tasks.rs` — bridge optionNotes: `- [ ] text due:YYYY-MM-DD` de `~/Documents/Notes/tasks/*.md`.
+  - `notify.rs` — lembretes one-shot: `due_events` (janela lookahead + lookback de 10min,
+    sem all-day), dedup em `~/.option/cal/notified` (chave `uid<TAB>start` da ocorrência,
+    prune > 2 dias). Sem daemon — quem agenda é systemd user timer ou cron.
   - `week.rs` — `WeekStart` (Monday default ISO 8601, ou Sunday).
 - `crates/optioncalendar-cli/` — `oca` / `optioncalendar` (mesmo entrypoint).
-  - `main.rs` — clap CLI: add, ls (numbered), today/week/month (optional positional date), next, search (Unicode case-insensitive), edit, rm, import, export, tui, config (`--launch-tui-on-no-args`, `--week-start`).
+  - `main.rs` — clap CLI: add, ls (numbered), today/week/month (optional positional date), next, notify (`--window`, `--send`), search (Unicode case-insensitive), edit, rm, import, export, tui, config (`--launch-tui-on-no-args`, `--week-start`, `--notify-window-minutes`).
     Flag global `--json` (ls/today/week/month/next/search) imprime array JSON estável em stdout.
   - `tests/edit_json.rs` — testes de integração de `edit` e `--json`.
   - `tui.rs` — month + agenda view read-only (crossterm). Grid segue `week_start`.
 
 ## Config
-- `~/.option/cal/config.toml` — ics_path, launch_tui_on_no_args, week_start.
+- `~/.option/cal/config.toml` — ics_path, launch_tui_on_no_args, week_start, notify_window_minutes.
 - `~/.option/cal/calendar.ics` — único arquivo de calendário.
+- `~/.option/cal/notified` — chaves de lembretes já enviados; só `oca notify --send` escreve.
+- `packaging/systemd/optioncalendar-notify.{service,timer}` — units de usuário pra
+  `oca notify --send` a cada 5min; instalação manual em `~/.config/systemd/user/`
+  (não vão no PKGBUILD).
 - `OPTION_HOME` tem precedência sobre `HOME` (optionSDK).
 
 ## Empacotamento / AUR
@@ -85,3 +92,6 @@
 - Props conhecidas dentro de sub-componentes (ex. `DESCRIPTION` de um VALARM) não pertencem ao
   evento: `find_prop` só olha depth 0.
 - Ocorrências expandidas de RRULE mantêm o mesmo `uid`; `rm` opera em `store.events`, não nas queries.
+- Dedup do notify usa `uid + start` da ocorrência (RRULE repete uid); `OCA_NOTIFY_CMD` troca
+  o notifier (padrão `notify-send`) e é como os testes evitam D-Bus de verdade.
+- `notify` sem `--send` é read-only (não grava estado); `--window 0` / `notify_window_minutes = 0` são erro.

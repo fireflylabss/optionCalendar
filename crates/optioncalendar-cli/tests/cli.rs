@@ -70,6 +70,26 @@ fn at(days: i64, hhmm: &str) -> String {
     format!("{}T{hhmm}", day.format("%Y-%m-%d"))
 }
 
+/// Now plus `minutes`, formatted `YYYY-MM-DDTHH:MM`.
+fn at_minutes(minutes: i64) -> String {
+    let t = chrono::Local::now().naive_local() + chrono::Duration::minutes(minutes);
+    t.format("%Y-%m-%dT%H:%M").to_string()
+}
+
+/// A fake notifier script that appends `"$@"` to `log`, for `OCA_NOTIFY_CMD`.
+fn fake_notifier(sb: &Sandbox) -> (std::path::PathBuf, std::path::PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+    let script = sb.path().join("notify.sh");
+    let log = sb.path().join("notify.log");
+    fs::write(
+        &script,
+        format!("#!/bin/sh\necho \"$@\" >> \"{}\"\n", log.display()),
+    )
+    .unwrap();
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+    (script, log)
+}
+
 #[test]
 fn bare_invocation_prints_help() {
     let sb = Sandbox::new();
@@ -202,6 +222,108 @@ fn next_without_upcoming_events() {
         .assert()
         .success()
         .stdout(contains("no upcoming events"));
+}
+
+#[test]
+fn notify_lists_events_starting_soon() {
+    let sb = Sandbox::new();
+    sb.add("Soon", &at_minutes(5));
+    sb.add("Far", &at_minutes(120));
+    sb.oca()
+        .args(["notify", "--window", "15"])
+        .assert()
+        .success()
+        .stdout(
+            contains("due within 15m")
+                .and(contains("Soon"))
+                .and(contains("Far").not()),
+        );
+}
+
+#[test]
+fn notify_skips_all_day_events() {
+    let sb = Sandbox::new();
+    let today = chrono::Local::now()
+        .date_naive()
+        .format("%Y-%m-%d")
+        .to_string();
+    sb.add("Holiday", &today);
+    sb.oca()
+        .arg("notify")
+        .assert()
+        .success()
+        .stdout(contains("nothing due").and(contains("Holiday").not()));
+}
+
+#[test]
+fn notify_json_emits_array() {
+    let sb = Sandbox::new();
+    sb.add("Soon", &at_minutes(5));
+    sb.oca()
+        .args(["--json", "notify"])
+        .assert()
+        .success()
+        .stdout(contains("\"summary\"").and(contains("Soon")));
+}
+
+#[test]
+fn notify_send_fires_once_and_dedups() {
+    let sb = Sandbox::new();
+    let (script, log) = fake_notifier(&sb);
+    sb.add("Soon", &at_minutes(5));
+
+    sb.oca()
+        .args(["notify", "--send"])
+        .env("OCA_NOTIFY_CMD", &script)
+        .assert()
+        .success()
+        .stdout(contains("sent 1 reminder"));
+    let sent = fs::read_to_string(&log).unwrap();
+    assert_eq!(sent.lines().count(), 1);
+    assert!(sent.contains("Soon"), "{sent}");
+    assert!(sb.path().join("cal").join("notified").exists());
+
+    sb.oca()
+        .args(["notify", "--send"])
+        .env("OCA_NOTIFY_CMD", &script)
+        .assert()
+        .success()
+        .stdout(contains("nothing to send"));
+    assert_eq!(fs::read_to_string(&log).unwrap().lines().count(), 1);
+}
+
+#[test]
+fn notify_send_obeys_config_window() {
+    let sb = Sandbox::new();
+    let (script, log) = fake_notifier(&sb);
+    sb.add("Later", &at_minutes(45));
+    sb.oca()
+        .args(["config", "--notify-window-minutes", "60"])
+        .assert()
+        .success()
+        .stdout(contains("notify_window_minutes set to 60"));
+    sb.oca()
+        .args(["notify", "--send"])
+        .env("OCA_NOTIFY_CMD", &script)
+        .assert()
+        .success()
+        .stdout(contains("sent 1 reminder"));
+    assert!(fs::read_to_string(&log).unwrap().contains("Later"));
+}
+
+#[test]
+fn notify_rejects_zero_window() {
+    let sb = Sandbox::new();
+    sb.oca()
+        .args(["notify", "--window", "0"])
+        .assert()
+        .failure()
+        .stderr(contains("positive number"));
+    sb.oca()
+        .args(["config", "--notify-window-minutes", "abc"])
+        .assert()
+        .failure()
+        .stderr(contains("invalid MIN"));
 }
 
 #[test]

@@ -29,6 +29,18 @@ We only call something **stable** when we mean it.
 
 </details>
 
+## v0.1.2-beta · 16/09/2026
+
+One-shot reminders: `oca notify` lists or fires desktop notifications for events starting soon, with dedup so timers don't spam — still no daemon. This version was made for CLI with a beta release channel on 16/09/2026 (v0.1.2-beta).
+
+- `oca notify [--window MIN]` lists timed event occurrences starting within the lookahead window (plus a 10-minute lookback for events that began while suspended); `--json` prints the array.
+- `oca notify --send` runs `notify-send` (or `$OCA_NOTIFY_CMD`) once per due occurrence and records sent keys in `~/.option/cal/notified` — dedup key is `uid + occurrence start`, so recurring events fire once per instance and repeat runs never re-send.
+- `notify_window_minutes` setting (default 15) via `oca config --notify-window-minutes N`; old configs load with the default.
+- All-day events are never notified; `RRULE` occurrences are expanded like in `today`/`week`/`month`.
+- `packaging/systemd/optioncalendar-notify.{service,timer}`: user units firing `oca notify --send` every 5 minutes (`Persistent=true` catches up after suspend/power-off). Install to `~/.config/systemd/user/` — see README "Reminders".
+- Core: new `notify` module (`due_events`, `notification_key`, `load_notified`, `save_notified`, `DEFAULT_LATE`); state file prunes keys older than 2 days.
+- CLI integration tests for `notify` listing, `--json`, `--send` dedup via a fake notifier, config window, and invalid `--window 0`.
+
 ## v0.1.1-stable · 14/09/2026
 
 CI/release automation, `edit` and `--json`, ICS fidelity (extra props, exclusive all-day, RRULE) and CLI polish. This version was made for CLI with a stable release channel on 14/09/2026 (v0.1.1-stable).

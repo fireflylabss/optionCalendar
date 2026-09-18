@@ -51,6 +51,8 @@ cargo build -p optioncalendar-cli
 ./target/debug/oca import backup.ics
 ./target/debug/oca export backup.ics
 ./target/debug/oca rm 1               # index from `oca ls`, or a UID
+./target/debug/oca notify             # events starting within the next 15m
+./target/debug/oca notify --send      # fire notify-send once per due event
 ./target/debug/oca tui
 ./target/debug/oca config
 ./target/debug/oca config --week-start sunday --launch-tui-on-no-args true
@@ -85,6 +87,29 @@ All-day events show as `all-day` in the `week`/`month` day groups.
 
 `oca tui` opens the month + agenda view (arrows/hjkl move, Tab switches
 pane, `T` toggles TUI-on-bare-invocation, q quits; read-only).
+
+## Reminders
+
+`oca notify` is a one-shot reminder pass — no daemon. Without flags it lists
+timed event occurrences starting within the lookahead window (15 minutes by
+default, or `--window MIN`); with `--send` it runs `notify-send` once per due
+occurrence and records what it sent in `~/.option/cal/notified`, so frequent
+runs never repeat. A short lookback (10 min) still catches events that began
+while the machine was suspended. All-day events are not notified.
+
+Run it on a schedule with the bundled systemd user units:
+
+```bash
+cp packaging/systemd/optioncalendar-notify.{service,timer} ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now optioncalendar-notify.timer
+```
+
+The service calls `/usr/bin/oca` (the AUR path); adjust `ExecStart` if `oca`
+lives elsewhere (e.g. `%h/.cargo/bin/oca`). The timer fires every 5 minutes
+and is `Persistent`, so runs missed while suspended or off catch up. Set
+`notify_window_minutes` with `oca config --notify-window-minutes N`, and
+`OCA_NOTIFY_CMD` to swap `notify-send` for another notifier.
 
 Bare `oca` prints help. Opt in to TUI-on-bare via
 `oca config --launch-tui-on-no-args true` (stored as
