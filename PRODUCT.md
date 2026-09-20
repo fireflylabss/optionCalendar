@@ -18,7 +18,7 @@ without cloud accounts, sync, or SaaS chrome — from the terminal as `oca`.
 optionCalendar is a minimal local calendar: one ICS file under `~/.option/cal/`,
 `add` / `ls` / `today` / `week` / `month` / `import`, an explicit `tui` month +
 agenda view, and `config` for settings — plus an optional bridge
-that surfaces optionNotes tasks with due dates inside `today`.
+that surfaces Markdown tasks with due dates inside `today`.
 
 Bare `oca` prints help unless opted in: `launch_tui_on_no_args`
 (`oca config --launch-tui-on-no-args true`) opens the TUI instead.

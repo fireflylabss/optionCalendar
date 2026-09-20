@@ -1,8 +1,8 @@
 # optionCalendar
 
 Minimal local calendar for the **Option** family — one ICS file on disk,
-day/week/month views, and an optional bridge to optionNotes tasks — via the
-`oca` CLI.
+day/week/month views, and an optional bridge to Markdown task lists
+(`~/Documents/Notes/tasks/*.md`) — via the `oca` CLI.
 
 ```text
 ◷ optionCalendar

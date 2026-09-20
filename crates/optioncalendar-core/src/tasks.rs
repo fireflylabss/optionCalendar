@@ -1,4 +1,4 @@
-//! Optional bridge to optionNotes tasks.
+//! Optional bridge to Markdown task lists.
 //!
 //! Reads `~/Documents/Notes/tasks/*.md` looking for open checklist items with
 //! a due date (`- [ ] text due:YYYY-MM-DD`). Never fails: a missing vault,

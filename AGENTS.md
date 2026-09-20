@@ -24,7 +24,7 @@
     `merged_between` (events + tasks due in a range). `events_on`/`events_between`
     retornam `Vec<Event>` (clones) e expandem RRULE `FREQ=DAILY|WEEKLY|MONTHLY|YEARLY` com
     INTERVAL/COUNT/UNTIL (`occurrences_between`); regra não suportada = só a primeira ocorrência.
-  - `tasks.rs` — bridge optionNotes: `- [ ] text due:YYYY-MM-DD` de `~/Documents/Notes/tasks/*.md`.
+  - `tasks.rs` — bridge de tasks Markdown: `- [ ] text due:YYYY-MM-DD` de `~/Documents/Notes/tasks/*.md`.
   - `notify.rs` — lembretes one-shot: `due_events` (janela lookahead + lookback de 10min,
     sem all-day), dedup em `~/.option/cal/notified` (chave `uid<TAB>start` da ocorrência,
     prune > 2 dias). Sem daemon — quem agenda é systemd user timer ou cron.
